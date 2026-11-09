@@ -1,0 +1,30 @@
+/*
+ * Copyright (c) 2024 Huawei Device Co., Ltd.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#ifndef LIBUV_DFX_ASYNC_STACK_H
+#define LIBUV_DFX_ASYNC_STACK_H
+#include <stdint.h>
+#include "uv.h"
+#define ASYNC_TYPE_LIBUV_TIMER (1ULL << 0)
+#define ASYNC_TYPE_LIBUV_QUEUE (1ULL << 1)
+#define ASYNC_TYPE_LIBUV_SEND  (1ULL << 2)
+typedef void(*UvSetStackIdFunc)(uint64_t stackId);
+typedef uint64_t(*UvCollectAsyncStackFunc)(uint64_t type);
+typedef void(*UvReleaseAsyncContextFunc)(uint64_t stackId);
+uint64_t LibuvCollectAsyncStack(uint64_t type);
+void LibuvSetStackId(uint64_t stackId);
+void LibuvReleaseAsyncCtx(uint64_t stackId);
+UV_EXTERN void LibuvSetAsyncStackFunc(UvCollectAsyncStackFunc collectAsyncStackFunc, UvSetStackIdFunc setStackIdFunc);
+UV_EXTERN void LibuvSetReleaseAsyncContextFunc(UvReleaseAsyncContextFunc releaseCtxFunc);
+#endif /* LIBUV_DFX_ASYNC_STACK_H */

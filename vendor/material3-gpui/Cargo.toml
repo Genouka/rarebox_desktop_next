@@ -1,0 +1,70 @@
+[workspace]
+members = ["catalog"]
+
+[package]
+name = "material3-gpui"
+version = "0.1.1"
+edition = "2024"
+license = "Apache-2.0"
+description = "Material Design 3 component library for gpui"
+repository = "https://github.com/TNTyep520/md3-gpui"
+keywords = ["gui", "ui", "material-design", "gpui", "components"]
+categories = ["gui"]
+exclude = ["catalog"]
+
+# 源码目录由 src 命名为 crates
+[lib]
+path = "crates/material3_gpui.rs"
+
+[features]
+dynamic-color = ["dep:mcu-hct", "dep:mcu-palettes", "dep:mcu-dynamiccolor"]
+
+[dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.6", default-features = false }
+anyhow = "1"
+unicode-segmentation = "1"
+mcu-hct = { version = "0.2.1", optional = true }
+mcu-palettes = { version = "0.2.0", optional = true }
+mcu-dynamiccolor = { version = "0.2.4", optional = true }
+
+# 桌面端使用 gpui 默认平台特性；Android 端由 gpui-mobile 提供平台实现，
+# 关闭 font-kit / wayland / x11 等桌面依赖。
+[target.'cfg(not(target_os = "android"))'.dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.6" }
+
+[dev-dependencies]
+usvg = "0.45.1"
+
+[lints.clippy]
+redundant_clone = "warn"
+
+[profile.dev]
+panic = "abort"
+debug = "limited"
+split-debuginfo = "unpacked"
+incremental = true
+
+[profile.dev.package]
+taffy = { opt-level = 3 }
+
+[profile.release]
+opt-level = "z"
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false
+debug-assertions = false
+overflow-checks = false
+incremental = false
+rpath = false
+
+[profile.release-fast]
+inherits = "release"
+opt-level = "z"
+strip = true
+codegen-units = 1
+debug = false
+debug-assertions = false
+overflow-checks = false
+incremental = false

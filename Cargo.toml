@@ -1,0 +1,96 @@
+[workspace]
+members = ["crates/rarebox-core", "crates/rarebox-ffi"]
+resolver = "3"
+
+[package]
+name = "rarebox-desktop"
+version = "0.2.0"
+edition = "2024"
+build = "build.rs"
+description = "RareBox Desktop — ADB / hdc debugging toolbox"
+license = "AGPL-3.0-only"
+repository = "https://github.com/Genouka/rarebox_desktop_next"
+
+[lib]
+name = "rarebox_desktop"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[[bin]]
+name = "rarebox-desktop"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+rarebox-core = { path = "crates/rarebox-core" }
+async-channel = "2"
+fadb-scrcpy = "0.8.12"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+gpui = { package = "gpui-pre", version = "=0.3.6", default-features = false }
+image = "0.25"
+material3-gpui = { git = "https://github.com/TNTyep520/material3-gpui.git", features = ["dynamic-color"] }
+scrcpy-protocol = "0.1.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+smallvec = "1"
+ureq = { version = "2", default-features = false, features = ["tls", "rustls", "json"] }
+hapsigner = { path = "vendor/hapsigner", default-features = false }
+x509-cert = { version = "0.2", features = ["pem"] }
+der = { version = "0.7", features = ["pem", "std"] }
+sha2 = "0.10"
+rand = "0.8"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# 桌面端：gpui-pre 的平台实现拆分为独立 crate。Android / iOS 改用 gpui-mobile，
+# 因此这些依赖只在桌面目标上启用。
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.6" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.6" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.6", features = [
+    "wayland",
+    "x11",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.6", features = [
+    "font-kit",
+] }
+
+# Android：gpui-mobile 提供 GPUI 的 Android 平台实现（android-activity + wgpu）。
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.15"
+gpui-mobile = { path = "vendor/gpui-mobile", default-features = false }
+jni = "0.22"
+log = "0.4"
+
+# iOS：gpui-mobile 提供 GPUI 的 UIKit + wgpu/Metal 实现。
+[target.'cfg(target_os = "ios")'.dependencies]
+gpui-mobile = { path = "vendor/gpui-mobile", default-features = false }
+
+# gpui-mobile 上游：https://github.com/itsbalamurali/gpui-mobile
+# 仓库内副本固定于提交 5fd54f4554263ae06753e90472c7f2e2ff5d7495。
+
+# 仓库内的 material3-gpui 源码来自上方 Git 仓库，用于在无网络/受限网络环境下可复现构建。
+[patch."https://github.com/TNTyep520/material3-gpui.git"]
+material3-gpui = { path = "vendor/material3-gpui" }
+
+# OpenHarmony HAP/HSP 签名内核：https://github.com/harmony-contrib/hapsigner-rs
+# 仓库内副本为 main 快照，仅放宽上游对 time 的精确版本锁定，见 vendor/hapsigner/VENDORED.md。
+
+[profile.dev]
+opt-level = 0
+debug = "limited"
+incremental = true
+
+[profile.dev.package]
+taffy = { opt-level = 3 }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

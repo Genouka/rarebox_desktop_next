@@ -1,0 +1,12 @@
+# Runtime SQLite database (auto-created by lib/db.php)
+/data/
+data/*.sqlite
+data/*.sqlite-journal
+data/*.sqlite-*
+
+# Local config overrides (never commit real secrets)
+config.local.php
+
+# PHP opcache / temp
+*.php~
+.cache/

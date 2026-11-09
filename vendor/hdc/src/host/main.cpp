@@ -1,0 +1,652 @@
+/*
+ * Copyright (C) 2021 Huawei Device Co., Ltd.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include <iostream>
+#include "base.h"
+#include "forward.h"
+#include "runtime_config.h"
+#include "server.h"
+#include "server_for_client.h"
+#include "server_instance.h"
+#include "subserver/subserver_manager.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+#ifdef __OHOS__
+#include <sys/xattr.h>
+#endif
+
+#ifndef HARMONY_PROJECT
+#include "ut_command.h"
+using namespace HdcTest;
+#endif
+
+using namespace Hdc;
+
+namespace Hdc {
+// return value: 0 == not command, 1 == one command, 2 == double command
+int IsRegisterCommand(string &outCommand, const char *cmd, const char *cmdnext)
+{
+    string sCmdNext = cmdnext == nullptr ? string("") : string(cmdnext);
+    string doubleCommand = cmd + string(" ") + sCmdNext;
+    static const vector<string> registerCommand = {
+        CMDSTR_SOFTWARE_VERSION, CMDSTR_SOFTWARE_HELP,
+        CMDSTR_TARGET_DISCOVER, CMDSTR_LIST_TARGETS,
+        CMDSTR_CHECK_SERVER, CMDSTR_CHECK_DEVICE,
+        CMDSTR_WAIT_FOR, CMDSTR_CONNECT_ANY,
+        CMDSTR_CONNECT_TARGET, CMDSTR_TARGET_RECONNECT,
+        CMDSTR_SHELL, CMDSTR_SHELL_EX,
+        CMDSTR_FILE_SEND, CMDSTR_FILE_RECV,
+        CMDSTR_FORWARD_FPORT, CMDSTR_FORWARD_RPORT,
+        CMDSTR_SERVICE_KILL, CMDSTR_SERVICE_START,
+        CMDSTR_SERVER_LOG_LEVEL, CMDSTR_GENERATE_KEY,
+        CMDSTR_APP_INSTALL, CMDSTR_APP_UNINSTALL,
+        CMDSTR_TARGET_MOUNT, CMDSTR_HILOG,
+        CMDSTR_STARTUP_MODE, CMDSTR_BUGREPORT,
+        CMDSTR_TARGET_MODE, CMDSTR_APP_SIDELOAD,
+        CMDSTR_TARGET_REBOOT, CMDSTR_LIST_JDWP,
+        CMDSTR_TRACK_JDWP, CMDSTR_FLASHD_UPDATE,
+        CMDSTR_FLASHD_FLASH, CMDSTR_FLASHD_ERASE,
+        CMDSTR_FLASHD_FORMAT,
+#ifndef HOST_OHOS
+        CMDSTR_SPAWN_SUB, CMDSTR_KILLALL_SUB,
+#endif
+    };
+
+    for (const string &v : registerCommand) {
+        if (doubleCommand == v) {
+            outCommand = doubleCommand;
+            return CMD_ARG1_COUNT;
+        }
+        if (cmd == v || !strncmp(cmd, CMDSTR_WAIT_FOR.c_str(), CMDSTR_WAIT_FOR.size())) {
+            outCommand = cmd;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void AppendCwdWhenTransfer(string &outCommand)
+{
+    if (outCommand != CMDSTR_FILE_SEND && outCommand != CMDSTR_FILE_RECV && outCommand != CMDSTR_APP_INSTALL &&
+        outCommand != CMDSTR_APP_SIDELOAD) {
+        return;
+    }
+    int value = -1;
+    char path[PATH_MAX] = "";
+    size_t size = sizeof(path);
+    value = uv_cwd(path, &size);
+    if (value < 0) {
+        constexpr int bufSize = 1024;
+        char buf[bufSize] = { 0 };
+        uv_strerror_r(value, buf, bufSize);
+        WRITE_LOG(LOG_FATAL, "append cwd path failed: %s", buf);
+        return;
+    }
+    if (strlen(path) >= PATH_MAX - 1) {
+        WRITE_LOG(LOG_FATAL, "append cwd path failed: buffer space max");
+        return;
+    }
+    if (path[strlen(path) - 1] != Base::GetPathSep()) {
+        path[strlen(path)] = Base::GetPathSep();
+    }
+    outCommand += outCommand.size() ? " " : "";
+    outCommand += CMDSTR_REMOTE_PARAMETER;
+    outCommand += outCommand.size() ? " -cwd " : "-cwd ";
+    outCommand += Base::StringFormat("\"%s\"", path);
+}
+
+int SplitOptionAndCommand(int argc, const char **argv, string &outOption, string &outCommand)
+{
+    bool foundCommand = false;
+    int resultChild = 0;
+    // we want to start from 1, ignore argv[0], but it has issue
+    for (int i = 0; i < argc; ++i) {
+        if (!foundCommand) {
+            resultChild = IsRegisterCommand(outCommand, argv[i], (i == argc - 1) ? nullptr : argv[i + 1]);
+            if (resultChild > 0) {
+                foundCommand = true;
+                if (resultChild == 2) {
+                    ++i;
+                }
+                AppendCwdWhenTransfer(outCommand);
+                continue;
+            }
+        }
+        if (foundCommand) {
+            outCommand += outCommand.size() ? " " : "";
+            string rawCmd = Base::UnicodeToUtf8(argv[i]);
+            outCommand += rawCmd.find(" ") == string::npos ? rawCmd : Base::StringFormat("\"%s\"", rawCmd.c_str());
+        } else {
+            outOption += outOption.size() ? " " : "";
+            string rawOption = Base::UnicodeToUtf8(argv[i]);
+            outOption += (i == 0) ? Base::StringFormat("\"%s\"", rawOption.c_str()) : rawOption;
+        }
+    }
+    return 0;
+}
+
+int RunServerMode()
+{
+    const std::string& serverListenString = RuntimeConfig::Instance().serverListenString;
+#ifndef __OHOS__
+    if (serverListenString.empty()) {
+        return -1;
+    }
+#endif
+    /*
+     * Notice !!!!!!
+     * For hdc server, all setenv must befor Base::RemoveLogFile()
+     * RemoveLogFile will create thread to run ThreadCompressLog and RemoveOlderLogFiles which will
+     * call uv_os_tmpdir and libuv inner wiil call getenv
+     * setenv and getenv concurrent calling wiil cause crash
+     * NOW, for hdc server setenv is in HdcServer construct
+    */
+    HdcServer server(true);
+    if (!server.Initial(serverListenString.c_str())) {
+        Base::PrintMessage("Initial failed");
+        return -1;
+    }
+    if (!RuntimeConfig::Instance().isSubserver && !WriteServerInstanceInfo(serverListenString)) {
+        WRITE_LOG(LOG_WARN, "[E002117] Failed to write HDC server endpoint information");
+    }
+    server.WorkerPendding();
+    return 0;
+}
+
+int RunPcDebugMode()
+{
+#ifdef HARMONY_PROJECT
+    Base::PrintMessage("Not support command...");
+#else
+    bool isPullServer = RuntimeConfig::Instance().isPullServer;
+    pthread_t pt;
+    if (isPullServer) {
+        int ret = pthread_create(&pt, nullptr, TestBackgroundServerForClient, nullptr);
+        if (ret != 0) {
+            WRITE_LOG(LOG_FATAL, "pthread_create failed: %d", ret);
+            return -1;
+        }
+        uv_sleep(200);  // give time to start serverForClient,at least 200ms
+    }
+    TestRuntimeCommandSimple(RuntimeConfig::Instance().isTCPorUSB, RuntimeConfig::Instance().isTestMethod, true);
+    if (isPullServer) {
+        pthread_join(pt, nullptr);
+        WRITE_LOG(LOG_DEBUG, "!!!!!!!!!Server finish");
+    }
+#endif
+    return 0;
+}
+
+static bool CheckCommand(const std::string& commands)
+{
+    if (commands.size() == 0) {
+        Base::PrintMessage("Unknown operation command...");
+        std::cerr << TranslateCommand::Usage();
+        return false;
+    }
+    return true;
+}
+
+int RunClientMode(string &commands)
+{
+    std::string connectKey = RuntimeConfig::Instance().connectKey;
+    std::string serverListenString = RuntimeConfig::Instance().serverListenString;
+    if (serverListenString.empty()) {
+        return -1;
+    }
+    uv_loop_t loopMain;
+    uv_loop_init(&loopMain);
+    HdcClient client(false, serverListenString, &loopMain, commands == CMDSTR_CHECK_SERVER);
+    if (!CheckCommand(commands)) {
+        return 0;
+    }
+#ifdef HOST_OHOS
+    if (!strncmp(commands.c_str(), CMDSTR_GENERATE_KEY.c_str(), CMDSTR_GENERATE_KEY.size())) {
+#else
+    if (!strncmp(commands.c_str(), CMDSTR_GENERATE_KEY.c_str(), CMDSTR_GENERATE_KEY.size()) ||
+        !strncmp(commands.c_str(), CMDSTR_KILLALL_SUB.c_str(), CMDSTR_KILLALL_SUB.size()) ||
+        !strncmp(commands.c_str(), CMDSTR_SERVICE_KILL.c_str(), CMDSTR_SERVICE_KILL.size())) {
+#endif
+        client.CtrlServiceWork(commands.c_str());
+        return 0;
+    }
+    if (!strncmp(commands.c_str(), CMDSTR_SERVICE_START.c_str(), CMDSTR_SERVICE_START.size())) {
+        client.ChannelCtrlServer(commands.find(" -r") != std::string::npos, connectKey);
+        return 0;
+    }
+    if (RuntimeConfig::Instance().isPullServer && Base::ProgramMutex(true) == 0) {
+#ifdef HOST_OHOS
+        if (!strncmp(commands.c_str(), CMDSTR_SERVICE_KILL.c_str(),
+            CMDSTR_SERVICE_KILL.size())) {
+            WRITE_LOG(LOG_DEBUG, "kill server, but server not exist, so do nothing");
+            return 0;
+        }
+#endif
+        // default pullup, just default listenstr.If want to customer listen-string, please use 'hdc -m -s lanip:port'
+        HdcServer::PullupServer(serverListenString.c_str());
+        uv_sleep(START_SERVER_FOR_CLIENT_TIME);  // give time to start serverForClient,at least 200ms
+    }
+    client.Initial(connectKey);
+    client.ExecuteCommand(commands.c_str());
+#ifdef HOST_OHOS
+    if (!strncmp(commands.c_str(), CMDSTR_SERVICE_KILL.c_str(), CMDSTR_SERVICE_KILL.size())) {
+        //server need restart
+        string &cmd = commands;
+        if (cmd.find("-r") != std::string::npos) {
+            HdcServer::PullupServer(serverListenString.c_str());
+            uv_sleep(START_SERVER_FOR_CLIENT_TIME);
+        }
+    }
+#endif
+    return 0;
+}
+
+#ifdef __OHOS__
+bool IsHiShellLabel()
+{
+    pid_t pid = getpid();
+    char pathBuf[BUF_SIZE_DEFAULT] = "";
+    if (snprintf_s(pathBuf, sizeof(pathBuf), sizeof(pathBuf) - 1, "/proc/%d/attr/current", pid) < 0) {
+        WRITE_LOG(LOG_FATAL, "get pathBuf failed, pid is %d", pid);
+        return false;
+    }
+
+    const char* attrName = "security.selinux";
+    // get attribute size
+    ssize_t attrSize = getxattr(pathBuf, attrName, nullptr, 0);
+    if (attrSize == 0 || attrSize == - 1) {
+        return false;
+    }
+    char* attrValue = new(std::nothrow) char[attrSize];
+    if (attrValue == nullptr) {
+        return false;
+    }
+    // get attribute value
+    if (getxattr(pathBuf, attrName, attrValue, attrSize) == -1) {
+        delete []attrValue;
+        return false;
+    }
+    string label(attrValue, attrSize - 1);
+    delete []attrValue;
+    return label == "u:r:hishell_hap:s0";
+}
+#endif
+
+static bool ValidatePort(const char* portStr, int& outPort)
+{
+    size_t len = strlen(portStr);
+    if (len == 0 || len > PORT_MAX_LEN) {
+        Base::PrintMessage("The port-string's length must be in [1, 5]");
+        return false;
+    }
+    for (size_t i = 0; i < len; i++) {
+        if (isdigit(portStr[i]) == 0) {
+            Base::PrintMessage("The port must be digit str:%s", portStr);
+            return false;
+        }
+    }
+    outPort = atoi(portStr);
+    if (outPort <= 0 || outPort > MAX_IP_PORT) {
+        Base::PrintMessage("Port range incorrect");
+        return false;
+    }
+    return true;
+}
+
+bool FormatServerListenString(const char* input, std::string& outputAddress)
+{
+    if (input == nullptr) {
+        Base::PrintMessage("Input is null");
+        return false;
+    }
+    if (strlen(input) > strlen("0000::0000:0000:0000:0000%interfacename:65535")) {
+        Base::PrintMessage("Unknown content of parament '-s'");
+        return false;
+    }
+    char buf[BUF_SIZE_TINY] = "";
+    if (strcpy_s(buf, sizeof(buf), input) != 0) {
+        Base::PrintMessage("strcpy_s error %d", errno);
+        return false;
+    }
+    int port = 0;
+    char *p = strrchr(buf, ':');
+    if (!p) {
+        if (!ValidatePort(buf, port)) {
+            return false;
+        }
+        (void)snprintf_s(buf, sizeof(buf), sizeof(buf) - 1, "::ffff:127.0.0.1:%d", port);
+        outputAddress = buf;
+    } else {
+        *p = '\0';
+        if (!ValidatePort(p + 1, port)) {
+            return false;
+        }
+        sockaddr_in addrv4;
+        sockaddr_in6 addrv6;
+        if (uv_ip4_addr(buf, port, &addrv4) == 0) {
+            outputAddress = IPV4_MAPPING_PREFIX;
+            outputAddress += input;
+        } else if (uv_ip6_addr(buf, port, &addrv6) == 0) {
+            outputAddress = input;
+        } else {
+            Base::PrintMessage("-s content IP incorrect.");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ParseServerListenString(char *optarg)
+{
+    if (optarg == nullptr) {
+        Base::PrintMessage("optarg is null");
+        return false;
+    }
+    std::string& serverListenString = RuntimeConfig::Instance().serverListenString;
+#ifdef __OHOS__
+    string temp = optarg;
+    if (temp == UDS_STR) {
+        serverListenString = temp;
+        return true;
+    }
+    if (!IsHiShellLabel()) {
+        Base::PrintMessage("[E001105] Unsupport option [s], please try command in HiShell.");
+        return false;
+    }
+#endif
+    return FormatServerListenString(optarg, serverListenString);
+}
+
+bool ParseForwardListenIP(char *optarg)
+{
+    if (optarg == nullptr) {
+        return false;
+    }
+    sockaddr_in addrv4;
+    sockaddr_in6 addrv6;
+    string forwardListenIP;
+
+    const int testPort = 8888;
+    if (uv_ip4_addr(optarg, testPort, &addrv4) == 0) {
+        forwardListenIP = IPV4_MAPPING_PREFIX;
+        forwardListenIP += optarg;
+        HdcForwardBase::SetForwardListenIP(forwardListenIP);
+    } else if (uv_ip6_addr(optarg, testPort, &addrv6) == 0) {
+        forwardListenIP = optarg;
+        HdcForwardBase::SetForwardListenIP(forwardListenIP);
+    } else {
+        Base::PrintMessage("[E001106]-e content IP incorrect.");
+        return false;
+    }
+    return true;
+}
+
+int ValidateAndParseLogLevel(const char* optarg, int& logLevel)
+{
+    if (optarg == nullptr || optarg[0] == '\0') {
+        Base::PrintMessage("Loglevel error: empty argument!");
+        return -1;
+    }
+    for (const char* p = optarg; *p != '\0'; ++p) {
+        if (!std::isdigit(static_cast<unsigned char>(*p))) {
+            Base::PrintMessage("Loglevel error: invalid number string!");
+            return -1;
+        }
+    }
+
+    std::string strArg(optarg);
+    if (!Base::StringToInt(strArg, logLevel)) {
+        Base::PrintMessage("Loglevel error: invalid number format!");
+        return -1;
+    }
+    if (logLevel < 0 || logLevel > LOG_LAST) {
+        Base::PrintMessage("Loglevel error!");
+        return -1;
+    }
+    return 0;
+}
+
+bool GetCommandlineOptions(int optArgc, const char *optArgv[])
+{
+    int ch = 0;
+    bool needExit = false;
+    opterr = 0;
+    // get option parameters first
+    while ((ch = getopt(optArgc, const_cast<char *const*>(optArgv), "hvpfmncs:Sd:e:t:l:o:Ni:L:")) != -1) {
+        switch (ch) {
+            case 'h': {
+                string usage = Hdc::TranslateCommand::Usage();
+                if (optind < optArgc && optind >= 0 && string(optArgv[optind]) == "verbose") {
+                    usage = Hdc::TranslateCommand::Verbose();
+                }
+                fprintf(stderr, "%s", usage.c_str());
+                needExit = true;
+                return needExit;
+            }
+            case 'v': {
+                string ver = Base::GetVersion();
+                fprintf(stdout, "%s\n", ver.c_str());
+                needExit = true;
+                return needExit;
+            }
+            case 'e': {
+                if (!ParseForwardListenIP(optarg)) {
+                    needExit = true;
+                    return needExit;
+                }
+                break;
+            }
+            case 'f': {  // [not-publish]
+                break;
+            }
+            case 'l': {
+                int logLevel = 0;
+                int ret = ValidateAndParseLogLevel(optarg, logLevel);
+                if (ret != 0) {
+                    needExit = true;
+                    return needExit;
+                }
+                RuntimeConfig::Instance().isCustomLoglevel = true;
+                Base::SetLogLevel(logLevel);
+                break;
+            }
+            case 'm': {  // [not-publish] is server mode，or client mode
+                RuntimeConfig::Instance().isServerMode = true;
+                Base::SetIsServerFlag(true);
+                break;
+            }
+            case 'n': {
+                RuntimeConfig::Instance().containerInOut = "-n";
+                break;
+            }
+            case 'c': {
+                RuntimeConfig::Instance().containerInOut = "-c";
+                break;
+            }
+            case 'p': {  // [not-publish]  not pullup server
+                RuntimeConfig::Instance().isPullServer = false;
+                break;
+            }
+            case 't': {  // key
+                if (strlen(optarg) > MAX_CONNECTKEY_SIZE) {
+                    Base::PrintMessage("Sizeo of of parament '-t' %zu is too long", strlen(optarg));
+                    needExit = true;
+                    return needExit;
+                }
+                RuntimeConfig::Instance().connectKey = optarg;
+                break;
+            }
+            case 's': {
+                if (!Hdc::ParseServerListenString(optarg)) {
+                    needExit = true;
+                    return needExit;
+                }
+                break;
+            }
+            case 'S': {
+                RuntimeConfig::Instance().externalCmd = true;
+                break;
+            }
+            case 'd':
+                Base::PrintMessage("Not support command...");
+                needExit = true;
+                break;
+            case 'o': {
+                std::string address = "";
+                if (!FormatServerListenString(optarg, address)) {
+                    return true;
+                }
+                RuntimeConfig::Instance().subserverPort = address;
+                break;
+            }
+            case 'N': {
+                RuntimeConfig::Instance().isSubserver = true;
+                break;
+            }
+            case 'i': {
+                if (strlen(optarg) > MAX_CONNECTKEY_SIZE) {
+                    Base::PrintMessage("Device serial too long");
+                    needExit = true;
+                    return needExit;
+                }
+                RuntimeConfig::Instance().subserverSerial = optarg;
+                break;
+            }
+            case 'L': {
+                RuntimeConfig::Instance().subserverLogFileName = optarg;
+                break;
+            }
+            case '?':
+                break;
+            default: {
+                Base::PrintMessage("Unknown parameters");
+                needExit = true;
+                return needExit;
+            }
+        }
+    }
+    return needExit;
+}
+
+void InitServerAddr(void)
+{
+    int port;
+    do {
+        char *env = getenv(ENV_SERVER_PORT.c_str());
+        if (!env) {
+            port = DEFAULT_PORT;
+            break;
+        }
+
+        size_t len = strlen(env);
+        size_t maxLen = 5;
+        if (len > maxLen) {
+            fprintf(stderr, "OHOS_HDC_SERVER_PORT %s is not in (0, 65535] range\n", env);
+            return;
+        }
+
+        for (size_t i = 0; i < len; i++) {
+            if (isdigit(env[i]) == 0) {
+                fprintf(stderr, "OHOS_HDC_SERVER_PORT %s is not digit\n", env);
+                return;
+            }
+        }
+
+        port = atoi(env);
+        if (port > MAX_IP_PORT || port <= 0) {
+            fprintf(stderr, "OHOS_HDC_SERVER_PORT %s is not in (0, 65535] range\n", env);
+            return;
+        }
+    } while (0);
+    RuntimeConfig::Instance().serverListenString = DEFAULT_SERVER_ADDR_IP + ":" + std::to_string(port);
+}
+}
+
+#ifndef UNIT_TEST
+static void CheckSpawnSubParam(const std::string& commands)
+{
+#ifndef HOST_OHOS
+    if (!strncmp(commands.c_str(), CMDSTR_SPAWN_SUB.c_str(), CMDSTR_SPAWN_SUB.size())) {
+        if (!SubserverManager::Instance().CheckClientParam(commands)) {
+            _exit(0);
+        }
+    }
+#endif
+}
+
+// hdc -l4 -m -s ip:port|hdc -l4 -m
+// hdc -l4 - s ip:port list targets
+int main(int argc, const char *argv[])
+{
+    RuntimeConfig& runtimeConfig = RuntimeConfig::Instance();
+    Base::UpdateEnvCache();
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+#endif
+    string options;
+    string commands;
+    Hdc::SplitOptionAndCommand(argc, argv, options, commands);
+    uv_setup_args(argc, const_cast<char **>(argv));
+    int optArgc = 0;
+    char **optArgv = Base::SplitCommandToArgs(options.c_str(), &optArgc);
+    bool cmdOptionResult;
+#ifndef __OHOS__
+    InitServerAddr();
+#endif
+    cmdOptionResult = GetCommandlineOptions(optArgc, const_cast<const char **>(optArgv));
+    delete[](reinterpret_cast<char*>(optArgv));
+    if (cmdOptionResult) {
+        return 0;
+    }
+    Base::InitProcess();
+
+    if (runtimeConfig.isSubserver) {
+        Hdc::Base::InitSubserverLogging(runtimeConfig.subserverLogFileName);
+        SubserverManager::Instance().CheckParentProcess();
+        SubserverManager::Instance().StartConnectTimer();
+        SubserverManager::RegisterPid();
+        if (FormatServerListenString(runtimeConfig.subserverPort.c_str(), runtimeConfig.serverListenString)) {
+            Hdc::RunServerMode();
+        }
+    } else if (runtimeConfig.isServerMode) {
+#ifdef FEATURE_HOST_LOG_COMPRESS
+        Base::CreateLogDir();
+#endif
+        // -m server.Run alone in the background, no -s will be listen loopback address
+        Hdc::RunServerMode();
+    } else if (runtimeConfig.isPcDebugRun) {
+        Hdc::RunPcDebugMode();
+    } else {
+#ifdef __OHOS__
+        if (runtimeConfig.serverListenString.empty()) {
+            runtimeConfig.serverListenString = UDS_STR;
+        }
+#endif
+        if (!runtimeConfig.isCustomLoglevel) {
+            Base::SetLogLevel(LOG_INFO);
+        }
+
+        CheckSpawnSubParam(commands);
+        Hdc::RunClientMode(commands);
+        Hdc::Base::RemoveLogCache();
+        _exit(0);
+    }
+    WRITE_LOG(LOG_DEBUG, "!!!!!!!!!Main finish main");
+    Hdc::Base::RemoveLogCache();
+    return 0;
+}
+#endif  // no UNIT_TEST

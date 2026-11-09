@@ -1,0 +1,50 @@
+/target/
+/dist/
+**/target/
+**/*.rs.bk
+*.pdb
+*.ilk
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Android / Gradle
+/android/local.properties
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/.cxx/
+/android/captures/
+/android/app/src/main/jniLibs/
+
+# 各平台现编的 hdc（Windows 二进制随仓库分发，见 src/hdc_bundle.rs）
+/vendor/hdc/linux/
+/vendor/hdc/macos/
+
+# ── 不随仓库发布的本地内容 ──────────────────────────────────────────────
+# 本地审计/临时站点副本
+.tmp-sitecheck/
+.tmp-*/
+# 营销素材与内部文档
+/promo/
+/项目说明书.md
+/截图.bmp
+# AI 提示词 / 代理指令
+**/AGENTS.md
+**/CLAUDE.md
+**/.claude/
+**/.cursor/
+**/.cursorrules
+**/copilot-instructions.md
+# 本地敏感配置与数据
+config.local.php
+**/config.local.php
+**/data/*.sqlite
+**/data/*.sqlite.bak
+# 部署脚本（含服务器地址）
+/website/deploy/
+# XcodeGen / Xcode 生成物
+/ios/build/
+/ios/*.xcodeproj/

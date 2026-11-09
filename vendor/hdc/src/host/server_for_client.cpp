@@ -1,0 +1,1800 @@
+/*
+ * Copyright (C) 2021 Huawei Device Co., Ltd.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#include "server_for_client.h"
+#ifndef TEST_HASH
+#include "hdc_hash_gen.h"
+#endif
+#include "server.h"
+#include "subserver/subserver_manager.h"
+#ifdef __OHOS__
+#include <sys/un.h>
+#include "system_depend.h"
+#endif
+#include "host_shell_option.h"
+#ifdef HDC_SUPPORT_REPORT_COMMAND_EVENT
+#include "command_event_report.h"
+#endif
+
+namespace Hdc {
+static const int MAX_CONNECT_DEVICE_RETRY_COUNT = 100;
+#ifdef __OHOS__
+static const int MAX_CONNECTIONS_COUNT = 16;
+static const std::string SYS_PARAM_ENTERPRISE_HDC_DISABLE = "persist.edm.hdc_remote_disable";
+static const int ENTERPRISE_HDC_DISABLE_ERR = -11;
+#endif
+
+namespace {
+
+string GetDaemonConnectionError(HDaemonInfo hdi)
+{
+    const char *transportError = hdi == nullptr ? nullptr : GetConnectionErrorInfo(hdi->connType);
+    if (transportError != nullptr) {
+        return transportError;
+    }
+    string errorInfo = "[E002106] Failed to communicate with daemon";
+    if (hdi != nullptr && !hdi->faultInfo.empty()) {
+        errorInfo += ": " + hdi->faultInfo;
+    }
+    return errorInfo;
+}
+
+bool ResolveHostReceiveTargetPath(const string &cwd, const string &path, string &targetPath)
+{
+    if (path.empty()) {
+        WRITE_LOG(LOG_WARN, "Reject empty host receive target path");
+        return false;
+    }
+
+    targetPath = path;
+    if (!Base::IsAbsolutePath(targetPath)) {
+        targetPath = cwd + path;
+    }
+    return true;
+}
+
+bool IsHostReceiveChildPath(const string &path)
+{
+    size_t componentBegin = 0;
+    for (size_t index = 0; index <= path.size(); ++index) {
+        bool isSeparator = index == path.size() || path[index] == '/' || path[index] == '\\';
+        if (!isSeparator) {
+            if (path[index] == '\0') {
+                WRITE_LOG(LOG_WARN, "Reject host receive path with embedded NUL");
+                return false;
+            }
+            continue;
+        }
+        size_t componentSize = index - componentBegin;
+        if (path.compare(componentBegin, componentSize, "..") == 0) {
+            WRITE_LOG(LOG_WARN, "Reject host receive path with parent component");
+            return false;
+        }
+        componentBegin = index + 1;
+    }
+    return true;
+}
+
+bool ParseHostReceiveArguments(int argc, char **argv, string &cwd, string &lastPath, size_t &pathCount)
+{
+    int index = 1;
+    while (index < argc) {
+        string arg = argv[index++];
+        if (arg == "-cwd") {
+            if (index >= argc) {
+                WRITE_LOG(LOG_WARN, "Reject host receive command with missing cwd");
+                return false;
+            }
+            cwd = argv[index++];
+            continue;
+        }
+        if (arg == "-z" || arg == "-sync" || arg == "-a" || arg == "-m") {
+            continue;
+        }
+        if (arg == "-b") {
+            if (index >= argc) {
+                WRITE_LOG(LOG_WARN, "Reject host receive command with missing bundle name");
+                return false;
+            }
+            ++index;
+            continue;
+        }
+        if (!arg.empty() && arg[0] == '-') {
+            WRITE_LOG(LOG_WARN, "Reject host receive command with unsupported option");
+            return false;
+        }
+        lastPath = arg;
+        ++pathCount;
+    }
+    if (pathCount == 0) {
+        WRITE_LOG(LOG_WARN, "Reject host receive command without path");
+        return false;
+    }
+    return true;
+}
+} // namespace
+
+HdcServerForClient::HdcServerForClient(const bool serverOrClient, const string &addrString, void *pClsServer,
+                                       uv_loop_t *loopMainIn)
+    : HdcChannelBase(serverOrClient, addrString, loopMainIn)
+{
+    clsServer = pClsServer;
+}
+
+HdcServerForClient::~HdcServerForClient()
+{
+    WRITE_LOG(LOG_DEBUG, "~HdcServerForClient");
+}
+
+void HdcServerForClient::Stop()
+{
+    Base::TryCloseHandle((uv_handle_t *)&tcpListen);
+#ifdef __OHOS__
+    Base::TryCloseHandle((uv_handle_t *)&udsListen);
+#endif
+}
+
+uint16_t HdcServerForClient::GetTCPListenPort()
+{
+    return channelPort;
+}
+
+#ifdef __OHOS__
+void HdcServerForClient::AcceptUdsClient(uv_stream_t *server, int status)
+{
+    StartTraceScope("HdcServerForClient::AcceptUdsClient");
+    HdcServerForClient *thisClass = (HdcServerForClient *)(((uv_pipe_t *)server)->data);
+    if (thisClass == nullptr) {
+        WRITE_LOG(LOG_FATAL, "HdcServerForClient is null");
+        return;
+    }
+    CALLSTAT_GUARD(thisClass->loopMainStatus, server->loop, "HdcServerForClient::AcceptUdsClient");
+    HChannel hChannel = new (std::nothrow) HdcChannel();
+    if (hChannel == nullptr) {
+        WRITE_LOG(LOG_FATAL, "AcceptUdsClient new channel fail");
+        return;
+    }
+    hChannel->isUds = true;
+    uint32_t uid = thisClass->MallocChannel(&hChannel);
+    hChannel->startTime = Base::GetRuntimeMSec();
+    int rc = 0;
+    if ((rc = uv_accept(server, (uv_stream_t *)&hChannel->hWorkUds)) < 0) {
+        WRITE_LOG(LOG_FATAL, "AcceptUdsClient uv_accept error rc:%d uid:%u", rc, uid);
+        thisClass->FreeChannel(uid);
+        return;
+    }
+    WRITE_LOG(LOG_DEBUG, "AcceptUdsClient uid:%u", uid);
+    // limit first recv
+    int bufMaxSize = 0;
+    uv_recv_buffer_size((uv_handle_t *)&hChannel->hWorkUds, &bufMaxSize);
+    auto funcChannelHeaderAlloc = [](uv_handle_t *handle, size_t sizeWanted, uv_buf_t *buf) -> void {
+        HChannel context = (HChannel)handle->data;
+        Base::ReallocBuf(&context->ioBuf, &context->bufSize, Base::GetMaxBufSize() * BUF_EXTEND_SIZE);
+        buf->base = (char *)context->ioBuf + context->availTailIndex;
+#ifdef HDC_VERSION_CHECK
+        buf->len = sizeof(struct ChannelHandShake) + DWORD_SERIALIZE_SIZE;  // only recv static size
+#else
+        buf->len = offsetof(struct ChannelHandShake, version) + DWORD_SERIALIZE_SIZE;
+#endif
+    };
+    // first packet static size, after this packet will be dup for normal recv
+    uv_read_start((uv_stream_t *)&hChannel->hWorkUds, funcChannelHeaderAlloc, ReadStream);
+    // channel handshake step1
+    struct ChannelHandShake handShake = {};
+    if (EOK == strcpy_s(handShake.banner, sizeof(handShake.banner), HANDSHAKE_MESSAGE.c_str())) {
+        handShake.banner[BANNER_FEATURE_TAG_OFFSET] = HUGE_BUF_TAG; // set feature tag for huge buf size
+        handShake.banner[SERVICE_KILL_OFFSET] = SERVICE_KILL_TAG;
+        handShake.channelId = htonl(hChannel->channelId);
+        string ver = Base::GetVersion() + HDC_MSG_HASH;
+        WRITE_LOG(LOG_DEBUG, "Server ver:%s", ver.c_str());
+        if (EOK != strcpy_s(handShake.version, sizeof(handShake.version), ver.c_str())) {
+            WRITE_LOG(LOG_FATAL, "strcpy_s failed");
+            return;
+        }
+#ifdef HDC_VERSION_CHECK
+    thisClass->Send(hChannel->channelId, (uint8_t *)&handShake, sizeof(struct ChannelHandShake));
+#else
+    // do not send version message if check feature disable
+    thisClass->Send(hChannel->channelId, reinterpret_cast<uint8_t *>(&handShake),
+                    offsetof(struct ChannelHandShake, version));
+#endif
+    }
+}
+#endif
+
+void HdcServerForClient::AcceptClient(uv_stream_t *server, int /* status */)
+{
+    StartTraceScope("HdcServerForClient::AcceptClient");
+    uv_tcp_t *pServTCP = (uv_tcp_t *)server;
+    HdcServerForClient *thisClass = (HdcServerForClient *)pServTCP->data;
+    CALLSTAT_GUARD(thisClass->loopMainStatus, server->loop, "HdcServerForClient::AcceptClient");
+#ifdef HOST_OHOS
+    HChannel hChannel = new (std::nothrow) HdcChannel();
+    if (hChannel == nullptr) {
+        WRITE_LOG(LOG_FATAL, "AcceptClient new channel fail");
+        return;
+    }
+#else
+    HChannel hChannel = nullptr;
+#endif
+    uint32_t uid = thisClass->MallocChannel(&hChannel);
+    if (!hChannel) {
+        WRITE_LOG(LOG_FATAL, "AcceptClient hChannel is nullptr");
+        return;
+    }
+    hChannel->startTime = Base::GetRuntimeMSec();
+    int rc = uv_accept(server, (uv_stream_t *)&hChannel->hWorkTCP);
+    if (rc < 0) {
+        WRITE_LOG(LOG_FATAL, "AcceptClient uv_accept error rc:%d uid:%u", rc, uid);
+        thisClass->FreeChannel(uid);
+        return;
+    }
+    WRITE_LOG(LOG_DEBUG, "AcceptClient uid:%u", uid);
+    // limit first recv
+    int bufMaxSize = 0;
+    uv_recv_buffer_size((uv_handle_t *)&hChannel->hWorkTCP, &bufMaxSize);
+    auto funcChannelHeaderAlloc = [](uv_handle_t *handle, size_t sizeWanted, uv_buf_t *buf) -> void {
+        HChannel context = (HChannel)handle->data;
+        Base::ReallocBuf(&context->ioBuf, &context->bufSize, Base::GetMaxBufSize() * BUF_EXTEND_SIZE);
+        buf->base = (char *)context->ioBuf + context->availTailIndex;
+#ifdef HDC_VERSION_CHECK
+        buf->len = sizeof(struct ChannelHandShake) + DWORD_SERIALIZE_SIZE;  // only recv static size
+#else
+        buf->len = offsetof(struct ChannelHandShake, version) + DWORD_SERIALIZE_SIZE;
+#endif
+    };
+    // first packet static size, after this packet will be dup for normal recv
+    uv_read_start((uv_stream_t *)&hChannel->hWorkTCP, funcChannelHeaderAlloc, ReadStream);
+    // channel handshake step1
+    struct ChannelHandShake handShake = {};
+    if (EOK == strcpy_s(handShake.banner, sizeof(handShake.banner), HANDSHAKE_MESSAGE.c_str())) {
+        handShake.banner[BANNER_FEATURE_TAG_OFFSET] = HUGE_BUF_TAG; // set feature tag for huge buf size
+#ifdef HOST_OHOS
+        handShake.banner[SERVICE_KILL_OFFSET] = SERVICE_KILL_TAG;
+#endif
+        handShake.channelId = htonl(hChannel->channelId);
+        string ver = Base::GetVersion() + HDC_MSG_HASH;
+        WRITE_LOG(LOG_DEBUG, "Server ver:%s", ver.c_str());
+        if (EOK != strcpy_s(handShake.version, sizeof(handShake.version), ver.c_str())) {
+            WRITE_LOG(LOG_FATAL, "strcpy_s failed");
+            return;
+        }
+#ifdef HDC_VERSION_CHECK
+    thisClass->Send(hChannel->channelId, (uint8_t *)&handShake, sizeof(struct ChannelHandShake));
+#else
+    // do not send version message if check feature disable
+    thisClass->Send(hChannel->channelId, reinterpret_cast<uint8_t *>(&handShake),
+                    offsetof(struct ChannelHandShake, version));
+#endif
+    }
+}
+
+#ifdef __OHOS__
+bool HdcServerForClient::SetUdsListen()
+{
+    udsListen.data = this;
+    int ret = -1;
+    ret = uv_pipe_init(loopMain, &udsListen, 0);
+
+    (void)unlink(UDS_PATH.c_str());
+
+    if ((ret = uv_pipe_bind(&udsListen, UDS_PATH.c_str())) != 0) {
+        WRITE_LOG(LOG_WARN, "bind uds addr fail! ret:%d", ret);
+        return false;
+    }
+
+    uv_fs_t req = {};
+    ret = uv_fs_chmod(nullptr, &req, UDS_PATH.c_str(), S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP,
+        nullptr);
+    if (ret < 0) {
+        char buffer[BUF_SIZE_DEFAULT] = { 0 };
+        uv_strerror_r(ret, buffer, BUF_SIZE_DEFAULT);
+        WRITE_LOG(LOG_WARN, "uv_fs_chmod uds failed %s", buffer);
+        uv_fs_req_cleanup(&req);
+        return false;
+    }
+    uv_fs_req_cleanup(&req);
+
+    if ((ret = uv_listen((uv_stream_t *)&udsListen, MAX_CONNECTIONS_COUNT, AcceptUdsClient)) != 0) {
+        WRITE_LOG(LOG_WARN, "uds listen fail! ret:%d", ret);
+        return false;
+    }
+    return true;
+}
+#endif
+
+bool HdcServerForClient::SetTCPListen()
+{
+    char buffer[BUF_SIZE_DEFAULT] = { 0 };
+    tcpListen.data = this;
+    struct sockaddr_in6 addr;
+    uv_tcp_init(loopMain, &tcpListen);
+
+    if (Base::GetCaller() == Base::Caller::SERVER) {
+        WRITE_LOG(LOG_DEBUG, "channelHost %s, port: %d", Hdc::MaskString(channelHost).c_str(), channelPort);
+    } else {
+        WRITE_LOG(LOG_DEBUG, "channelHost %s, port: %d", channelHost.c_str(), channelPort);
+    }
+    int rc = uv_ip6_addr(channelHost.c_str(), channelPort, &addr);
+    if (rc != 0) {
+        uv_strerror_r(rc, buffer, BUF_SIZE_DEFAULT);
+        WRITE_LOG(LOG_FATAL, "uv_ip6_addr %d %s", rc, buffer);
+        return false;
+    }
+    rc = uv_tcp_bind(&tcpListen, (const struct sockaddr *)&addr, 0);
+    if (rc != 0) {
+        WRITE_LOG(LOG_WARN, "uv_tcp_bind ipv6 %d", rc);
+        if (rc == -EAFNOSUPPORT) {
+            if (!TryBindIPv4Fallback(buffer)) {
+                return false;
+            }
+        } else {
+            uv_strerror_r(rc, buffer, BUF_SIZE_DEFAULT);
+            WRITE_LOG(LOG_FATAL, "uv_tcp_bind %d %s", rc, buffer);
+            return false;
+        }
+    }
+    int backLog = 128;
+    rc = uv_listen((uv_stream_t *)&tcpListen, backLog, (uv_connection_cb)AcceptClient);
+    if (rc != 0) {
+        uv_strerror_r(rc, buffer, BUF_SIZE_DEFAULT);
+        WRITE_LOG(LOG_FATAL, "uv_listen %d %s", rc, buffer);
+        return false;
+    }
+    return true;
+}
+
+bool HdcServerForClient::TryBindIPv4Fallback(char *buffer)
+{
+    size_t index = channelHost.find(IPV4_MAPPING_PREFIX);
+    size_t size = IPV4_MAPPING_PREFIX.size();
+    if (index != std::string::npos) {
+        struct sockaddr_in addr4v;
+        std::string ipv4 = channelHost.substr(index + size);
+        int rc = uv_ip4_addr(ipv4.c_str(), channelPort, &addr4v);
+        if (rc != 0) {
+            uv_strerror_r(rc, buffer, BUF_SIZE_DEFAULT);
+            WRITE_LOG(LOG_FATAL, "uv_ip4_addr %s failed %d %s", ipv4.c_str(), rc, buffer);
+            return false;
+        }
+        rc = uv_tcp_bind(&tcpListen, (const struct sockaddr *)&addr4v, 0);
+        if (rc != 0) {
+            uv_strerror_r(rc, buffer, BUF_SIZE_DEFAULT);
+            if (Base::GetCaller() == Base::Caller::SERVER) {
+                WRITE_LOG(LOG_FATAL, "uv_tcp_bind ipv4 %s failed %d %s",
+                    Hdc::MaskString(ipv4).c_str(), rc, buffer);
+            } else {
+                WRITE_LOG(LOG_FATAL, "uv_tcp_bind ipv4 %s failed %d %s",
+                    ipv4.c_str(), rc, buffer);
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+int HdcServerForClient::Initial()
+{
+    if (!clsServer) {
+        WRITE_LOG(LOG_FATAL, "Module client initial failed");
+        return -1;
+    }
+#ifndef __OHOS__
+    if (!channelHostPort.size() || !channelHost.size() || !channelPort) {
+        WRITE_LOG(LOG_FATAL, "Listen string initial failed");
+        return -2;  // -2:err for Listen initial failed
+    }
+    if (!SetTCPListen()) {
+        WRITE_LOG(LOG_FATAL, "SetTCPListen failed");
+        int listenError = -3;  // -3:error for SetTCPListen failed
+        return listenError;
+    }
+#else
+    if (!channelHostPort.size() || !channelHost.size() || !channelPort) {
+        WRITE_LOG(LOG_FATAL, "Listen string initial failed");
+    } else {
+        if (!SetTCPListen()) {
+            WRITE_LOG(LOG_FATAL, "SetTCPListen failed");
+            //ohos system needeed default uds listen
+        }
+    }
+    if (!SetUdsListen()) {
+        WRITE_LOG(LOG_FATAL, "SetUdsListen failed");
+        int listenError = -3; // -3:error for SetUdsListen failed
+        return listenError;
+    }
+#endif
+    
+    return 0;
+}
+
+void HdcServerForClient::EchoClient(HChannel hChannel, MessageLevel level, const char *msg, ...)
+{
+    StartTraceScope("HdcServerForClient::EchoClient");
+    string logInfo = "";
+    switch (level) {
+        case MSG_FAIL:
+            logInfo = MESSAGE_FAIL;
+            break;
+        case MSG_INFO:
+            logInfo = MESSAGE_INFO;
+            break;
+        default:  // successful, not append extra info
+            break;
+    }
+    va_list vaArgs;
+    va_start(vaArgs, msg);
+    string log = logInfo + Base::StringFormat(msg, vaArgs);
+    va_end(vaArgs);
+    if (log.back() != '\n') {
+        log += "\r\n";
+    }
+    SendChannel(hChannel, const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(log.c_str())), log.size());
+}
+
+void HdcServerForClient::EchoClient(HChannel hChannel, MessageLevel level, const std::string& info)
+{
+    string lvlstr = "";
+    switch (level) {
+        case MSG_FAIL:
+            lvlstr = MESSAGE_FAIL;
+            break;
+        case MSG_INFO:
+            lvlstr = MESSAGE_INFO;
+            break;
+        default:  // successful, not append extra info
+            break;
+    }
+    string log = lvlstr + info;
+    if (log.back() != '\n') {
+        log += "\r\n";
+    }
+    SendChannel(hChannel, const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(log.c_str())), log.size());
+}
+
+void HdcServerForClient::EchoClientRaw(const HChannel hChannel, uint8_t *payload, const int payloadSize)
+{
+    SendChannel(hChannel, payload, payloadSize);
+}
+
+// HdcServerForClient passthrough file command to client
+void HdcServerForClient::SendCommandToClient(const HChannel hChannel, const uint16_t commandFlag,
+                                             uint8_t *payload, const int payloadSize)
+{
+    if (Base::CanPrintCmd(commandFlag)) {
+        WRITE_LOG(LOG_INFO, "SendCommandToClient cid:%u sid:%s commandID:%u payloadSize:%d",
+            hChannel->channelId, Hdc::MaskSessionIdToString(hChannel->targetSessionId).c_str(),
+            commandFlag, payloadSize);
+    }
+    SendChannelWithCmd(hChannel, commandFlag, payload, payloadSize);
+}
+
+bool HdcServerForClient::SendToDaemon(HChannel hChannel, const uint16_t commandFlag, uint8_t *bufPtr, const int bufSize)
+{
+    StartTraceScope("HdcServerForClient::SendToDaemon");
+    if (bufSize < 0) {
+        WRITE_LOG(LOG_WARN, "SendToDaemon invalid bufSize:%d cid:%u", bufSize, hChannel->channelId);
+        return false;
+    }
+    HDaemonInfo hdi = nullptr;
+    bool ret = false;
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    if (Base::CanPrintCmd(commandFlag)) {
+        WRITE_LOG(LOG_INFO, "SendToDaemon cid:%u sid:%s key:%s commandID:%u sizeSend:%d", hChannel->channelId,
+            Hdc::MaskSessionIdToString(hChannel->targetSessionId).c_str(),
+            Hdc::MaskString(hChannel->connectKey).c_str(), commandFlag, bufSize);
+    }
+    while (true) {
+        ptrServer->AdminDaemonMap(OP_QUERY, hChannel->connectKey, hdi);
+        if (hdi == nullptr) {
+            WRITE_LOG(LOG_FATAL, "SendToDaemon hdi nullptr");
+            break;
+        }
+        if (hdi->connStatus != STATUS_CONNECTED) {
+            WRITE_LOG(LOG_FATAL, "SendToDaemon not connected");
+            break;
+        }
+        if (!hdi->hSession) {
+            WRITE_LOG(LOG_FATAL, "SendToDaemon hdi->hSession nullptr");
+            break;
+        }
+        if (ptrServer->Send(hdi->hSession->sessionId, hChannel->channelId, commandFlag, bufPtr, bufSize) < 0) {
+            WRITE_LOG(LOG_FATAL, "SendToDaemon Send failed channelId:%u", hChannel->channelId);
+            break;
+        }
+        ret = true;
+        break;
+    }
+    return ret;
+}
+
+void HdcServerForClient::OrderFindTargets(HChannel hChannel)
+{
+    int count = 0;
+    EchoClient(hChannel, MSG_INFO, "Please add HDC server's firewall ruler to allow udp incoming, udpport:%d",
+               DEFAULT_PORT);
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    ptrServer->clsTCPClt->FindLanDaemon();
+    list<string> &lst = ptrServer->clsTCPClt->lstDaemonResult;
+    // refresh main list
+    HdcDaemonInformation di;
+    while (!lst.empty()) {
+        di = {};
+        ++count;
+        di.connectKey = lst.front();
+        di.connType = CONN_TCP;
+        di.connStatus = STATUS_READY;
+        di.inited = false;
+        HDaemonInfo pDi = reinterpret_cast<HDaemonInfo>(&di);
+        ptrServer->AdminDaemonMap(OP_ADD, STRING_EMPTY, pDi);
+        lst.pop_front();
+    }
+    EchoClient(hChannel, MSG_INFO, "Broadcast find daemon, total:%d", count);
+#ifdef UNIT_TEST
+    string bufString = std::to_string(count);
+    Base::WriteBinFile((UT_TMP_PATH + "/base-discover.result").c_str(), (uint8_t *)bufString.c_str(), bufString.size(),
+                       true);
+#endif
+}
+
+static bool IsDisconnect(HDaemonInfo hdi, uint16_t count)
+{
+    if (hdi == nullptr) {
+        return true;
+    }
+#ifdef HDC_SUPPORT_UART
+    if (hdi->connType == CONN_SERIAL) {
+        const uint16_t maxRetryCount = 500;
+        if (count > maxRetryCount) {
+            WRITE_LOG(LOG_INFO, "uart retry count:%u", count);
+            return true;
+        }
+        return false;
+    }
+#endif
+    HSession hSession = hdi->hSession;
+    if (hSession == nullptr) {
+        WRITE_LOG(LOG_INFO, "hSession is nullptr connKey:%s", Hdc::MaskString(hdi->connectKey).c_str());
+        return true;
+    }
+    if (!hSession->isRunningOk) {
+        WRITE_LOG(LOG_INFO, "isRunningOk is false sessionId:%s",
+            Hdc::MaskSessionIdToString(hSession->sessionId).c_str());
+        return true;
+    }
+    return false;
+}
+
+void HdcServerForClient::OrderConnecTargetResult(uv_timer_t *req)
+{
+    HChannel hChannel = (HChannel)req->data;
+    HdcServerForClient *thisClass = (HdcServerForClient *)hChannel->clsChannel;
+    HdcServer *ptrServer = (HdcServer *)thisClass->clsServer;
+    bool bConnectOK = false;
+    bool bExitRepet = false;
+    HDaemonInfo hdi = nullptr;
+    string sRet;
+    string target = std::string(hChannel->bufStd + 2);
+    if (target == "any") {
+        ptrServer->AdminDaemonMap(OP_GET_ANY, target, hdi);
+    } else {
+        ptrServer->AdminDaemonMap(OP_QUERY, target, hdi);
+    }
+    if (hdi && hdi->connStatus == STATUS_CONNECTED) {
+        bConnectOK = true;
+    }
+    if (bConnectOK) {
+        bExitRepet = thisClass->OnConnectTargetSuccess(hChannel, hdi);
+    } else {
+        uint16_t *bRetryCount = reinterpret_cast<uint16_t *>(hChannel->bufStd);
+        ++(*bRetryCount);
+        if (hChannel->connectLocalDevice && *bRetryCount > MAX_CONNECT_DEVICE_RETRY_COUNT) {
+            bExitRepet = true;
+        } else {
+            bExitRepet = IsDisconnect(hdi, *bRetryCount);
+        }
+        if (bExitRepet) {
+            sRet = "Connect failed\r\n" + GetDaemonConnectionError(hdi);
+            thisClass->EchoClient(hChannel, MSG_FAIL, sRet);
+            if (hdi != nullptr) {
+                hdi->inited = false;
+                hdi->connStatus = STATUS_OFFLINE;
+                ptrServer->AdminDaemonMap(OP_UPDATE, target, hdi);
+            }
+            WRITE_LOG(LOG_INFO, "channelId:%u target:%s STATUS_OFFLINE",
+                      hChannel->channelId, Hdc::MaskString(target).c_str());
+        }
+    }
+    if (bExitRepet) {
+        thisClass->FreeChannel(hChannel->channelId);
+        Base::TryCloseHandle((const uv_handle_t *)req, Base::CloseTimerCallback);
+    }
+}
+
+bool HdcServerForClient::OnConnectTargetSuccess(HChannel hChannel, HDaemonInfo hdi)
+{
+    string sRet;
+    if (hChannel->isCheck) {
+        WRITE_LOG(LOG_INFO, "check device success and remove %s", Hdc::MaskString(hChannel->key).c_str());
+        CommandRemoveSession(hChannel, hChannel->key.c_str());
+        EchoClient(hChannel, MSG_OK, const_cast<char *>(hdi->version.c_str()));
+    } else {
+        sRet = "Connect OK";
+        EchoClient(hChannel, MSG_OK, const_cast<char *>(sRet.c_str()));
+    }
+    return true;
+}
+
+bool HdcServerForClient::NewConnectTry(void *ptrServer, HChannel hChannel, const string &connectKey, bool isCheck)
+{
+#ifdef HDC_DEBUG
+    WRITE_LOG(LOG_ALL, "%s %s", __FUNCTION__, Hdc::MaskString(connectKey).c_str());
+#endif
+    int childRet = ((HdcServer *)ptrServer)->CreateConnect(connectKey, isCheck);
+    bool ret = false;
+    constexpr uint8_t bufOffsetTwo = 2;
+    constexpr uint8_t bufOffsetThree = 3;
+    if (childRet == -1) {
+        EchoClient(hChannel, MSG_INFO, "Target is connected, repeat operation");
+    } else if (childRet == RET_SUCCESS) {
+        size_t pos = connectKey.find(":");
+        if (pos != std::string::npos) {
+            string ip = connectKey.substr(0, pos);
+            if (ip == "127.0.0.1") {
+                hChannel->connectLocalDevice = true;
+            }
+        }
+        (void)memset_s(hChannel->bufStd, sizeof(hChannel->bufStd), 0, sizeof(hChannel->bufStd));
+        childRet = snprintf_s(hChannel->bufStd + bufOffsetTwo, sizeof(hChannel->bufStd) - bufOffsetTwo,
+                              sizeof(hChannel->bufStd) - bufOffsetThree, "%s",
+                              const_cast<char *>(connectKey.c_str()));
+        if (childRet > 0) {
+            Base::TimerUvTask(loopMain, hChannel, OrderConnecTargetResult, UV_START_REPEAT);
+            ret = true;
+        }
+    } else {
+        HDaemonInfo hdi = nullptr;
+        ((HdcServer *)ptrServer)->AdminDaemonMap(OP_QUERY, connectKey, hdi);
+        if (childRet == ERR_NO_SUPPORT) {
+            EchoClient(hChannel, MSG_FAIL, "CreateConnect failed");
+            WRITE_LOG(LOG_FATAL, "CreateConnect failed");
+        } else {
+            WRITE_LOG(LOG_FATAL, "NewConnectTry failed");
+        }
+        EchoClient(hChannel, MSG_OK, GetDaemonConnectionError(hdi));
+    }
+    return ret;
+}
+
+bool HdcServerForClient::CommandRemoveSession(HChannel hChannel, const char *connectKey)
+{
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    HDaemonInfo hdiOld = nullptr;
+    (reinterpret_cast<HdcServer *>(ptrServer))->AdminDaemonMap(OP_QUERY, connectKey, hdiOld);
+    if (hdiOld == nullptr || hdiOld->hSession == nullptr) {
+        EchoClient(hChannel, MSG_FAIL, "No target available");
+        WRITE_LOG(LOG_FATAL, "CommandRemoveSession No target available");
+        return false;
+    }
+    (reinterpret_cast<HdcServer *>(ptrServer))->FreeSession(hdiOld->hSession->sessionId);
+    return true;
+}
+
+bool HdcServerForClient::CommandReconnectTarget(HChannel hChannel, const char *connectKey)
+{
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    string key = connectKey;
+    if (key.empty()) {
+        EchoClient(hChannel, MSG_FAIL, "Usage: reconnect <target-key>");
+        WRITE_LOG(LOG_WARN, "CommandReconnectTarget missing target key");
+        return false;
+    }
+    HDaemonInfo hdiOld = nullptr;
+    ptrServer->AdminDaemonMap(OP_QUERY, key, hdiOld);
+    if (hdiOld == nullptr || hdiOld->connStatus != STATUS_CONNECTED) {
+        EchoClient(hChannel, MSG_FAIL, "Target device %s not available", key.c_str());
+        WRITE_LOG(LOG_WARN, "CommandReconnectTarget target not found or not connected");
+        return false;
+    }
+    if (hdiOld->connType != CONN_USB) {
+        EchoClient(hChannel, MSG_FAIL, "Reconnect only supports USB devices");
+        WRITE_LOG(LOG_WARN, "CommandReconnectTarget non-USB target");
+        return false;
+    }
+    string usbMountPoint = hdiOld->usbMountPoint;
+    uint32_t sessionId = (hdiOld->hSession != nullptr) ? hdiOld->hSession->sessionId : 0;
+    if (sessionId > 0) {
+        ptrServer->FreeSession(sessionId);
+    }
+    if (!usbMountPoint.empty() && ptrServer->clsUSBClt != nullptr) {
+        ptrServer->clsUSBClt->AllowUsbNodeRescan(usbMountPoint);
+    }
+    string msg = "Reconnecting " + key + " ...";
+    EchoClient(hChannel, MSG_OK, msg.c_str());
+    WRITE_LOG(LOG_INFO, "CommandReconnectTarget key:%s mount:%s",
+              Hdc::MaskString(key).c_str(), usbMountPoint.c_str());
+    return true;
+}
+
+bool HdcServerForClient::RemoveFportkey(const string &forwardKey)
+{
+    StartTraceScope("HdcServerForClient::RemoveFportkey");
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    HForwardInfo hfi = nullptr;
+    ptrServer->AdminForwardMap(OP_QUERY, forwardKey, hfi);
+    if (!hfi) {
+        WRITE_LOG(LOG_FATAL, "RemoveFportkey hfi nullptr forwardKey:%s", Hdc::MaskString(forwardKey).c_str());
+        return false;
+    }
+    HSession hSession = ptrServer->AdminSession(OP_QUERY, hfi->sessionId, nullptr);
+    if (!hSession) {
+        WRITE_LOG(LOG_FATAL, "RemoveFportkey hSession nullptr sessionId:%s",
+            Hdc::MaskSessionIdToString(hfi->sessionId).c_str());
+        ptrServer->AdminForwardMap(OP_REMOVE, forwardKey, hfi);
+        return true;
+    }
+    hSession->commandCount++;
+    ptrServer->ClearOwnTasks(hSession, hfi->channelId);
+    FreeChannel(hfi->channelId);
+    hfi = nullptr;
+    ptrServer->AdminForwardMap(OP_REMOVE, forwardKey, hfi);
+    return true;
+}
+
+void HdcServerForClient::GetTargetList(HChannel hChannel, void *formatCommandInput)
+{
+    TranslateCommand::FormatCommand *formatCommand = (TranslateCommand::FormatCommand *)formatCommandInput;
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    uint16_t cmd = OP_GET_STRLIST;
+    if (formatCommand->parameters == "v") {
+        cmd = OP_GET_STRLIST_FULL;
+    }
+    HDaemonInfo hdi = nullptr;
+    string sRet = ptrServer->AdminDaemonMap(cmd, STRING_EMPTY, hdi);
+    if (!sRet.length()) {
+        sRet = EMPTY_ECHO;
+    }
+    EchoClient(hChannel, MSG_OK, sRet);
+#ifdef UNIT_TEST
+    Base::WriteBinFile((UT_TMP_PATH + "/base-list.result").c_str(), (uint8_t *)MESSAGE_SUCCESS.c_str(),
+                       MESSAGE_SUCCESS.size(), true);
+#endif
+}
+
+bool HdcServerForClient::GetAnyTarget(HChannel hChannel)
+{
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    HDaemonInfo hdi = nullptr;
+    ptrServer->AdminDaemonMap(OP_GET_ANY, STRING_EMPTY, hdi);
+    if (!hdi) {
+        EchoClient(hChannel, MSG_FAIL, "No target available");
+        return false;
+    }
+    // can not use hdi->connectKey.This memory may be released to re-Malloc
+    string connectKey = hdi->connectKey;
+    bool ret = NewConnectTry(ptrServer, hChannel, connectKey);
+#ifdef UNIT_TEST
+    Base::WriteBinFile((UT_TMP_PATH + "/base-any.result").c_str(), (uint8_t *)MESSAGE_SUCCESS.c_str(),
+                       MESSAGE_SUCCESS.size(), true);
+#endif
+    return ret;
+}
+
+bool HdcServerForClient::WaitForAny(HChannel hChannel)
+{
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    HDaemonInfo hdi = nullptr;
+    if (!hChannel->connectKey.empty()) {
+        ptrServer->AdminDaemonMap(OP_WAIT_FOR_ANY, hChannel->connectKey, hdi);
+    } else {
+        ptrServer->AdminDaemonMap(OP_WAIT_FOR_ANY, STRING_EMPTY, hdi);
+    }
+    if (!hdi) {
+        EchoClient(hChannel, MSG_FAIL, "No any connected target");
+        return false;
+    }
+    string key = hdi->connectKey;
+    EchoClient(hChannel, MSG_OK, "Wait for connected target is %s", key.c_str());
+    return true;
+}
+
+static const std::string& GetSubserverStatusStr(SubserverStatus status)
+{
+    static const std::unordered_map<SubserverStatus, std::string> map = {
+        {SubserverStatus::CONNECTING, "Subserver started, connecting USB"},
+        {SubserverStatus::SUBPROCESS_FAIL, "Subprocess launch failed"},
+        {SubserverStatus::PORT_LISTEN_FAIL, "Port binding failed"},
+        {SubserverStatus::CONNECT_TIMEOUT, "USB connection timeout"},
+        {SubserverStatus::INVALID_DEVICE, "Device not found"},
+        {SubserverStatus::PARAM_ERROR, "Invalid parameters"},
+        {SubserverStatus::CONNECT_SUCCESS, "Subserver connected successfully"},
+        {SubserverStatus::USB_DISCONNECT, "USB device disconnected"},
+        {SubserverStatus::SUBSERVER_ABONDON, "Only main server can spawn subserver"},
+        {SubserverStatus::SUBSERVER_OTHER_EXIT, "Subserver process exited"}
+    };
+
+    auto it = map.find(status);
+    if (it == map.end()) {
+        static const std::string unknownError = "Unknown error";
+        return unknownError;
+    }
+    return it->second;
+}
+
+bool HdcServerForClient::ProcessSubserver(HChannel hChannel, const std::string& parameters)
+{
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    SubserverStatus status = SubserverManager::Instance().HandleCommand(ptrServer, hChannel, parameters);
+    const std::string& str = GetSubserverStatusStr(status);
+    EchoClient(hChannel, MSG_OK, "%s", str.c_str());
+    return true;
+}
+
+bool HdcServerForClient::RemoveForward(HChannel hChannel, const char *parameterString)
+{
+    StartTraceScope("HdcServerForClient::RemoveForward");
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    HForwardInfo hfi = nullptr;
+    bool ret = false;
+    std::string echo = ptrServer->AdminForwardMap(OP_GET_STRLIST, hChannel->connectKey, hfi);
+    vector<string> filterStrings;
+    Base::SplitString(echo, string("\n"), filterStrings);
+    for (auto &&s : filterStrings) {
+        std::string taskString = s;
+        size_t pos = taskString.rfind("|");
+        if (pos != string::npos && pos + 1 < taskString.length()) {
+            taskString = taskString.substr(pos + 1);
+        } else {
+            WRITE_LOG(LOG_WARN, "remove forward invalid %s", Hdc::MaskString(taskString).c_str());
+            ret = false;
+            break;
+        }
+        if (parameterString != nullptr && taskString.compare(parameterString) != 0) {
+            continue;
+        }
+        ret |= RemoveFportkey(s);
+    }
+    if (ret) {
+        EchoClient(hChannel, MSG_OK, "Remove forward ruler success, ruler:%s", parameterString);
+    } else {
+        EchoClient(hChannel, MSG_FAIL, "Remove forward ruler failed, ruler is not exist %s", parameterString);
+    }
+    return ret;
+}
+
+bool HdcServerForClient::DoServerLogLevel(HChannel hChannel, const string &parameters)
+{
+    uint8_t oldLevel = Base::GetLogLevel();
+    if (parameters.empty()) {
+        EchoClient(hChannel, MSG_OK, "Current server log level: %u (%s)", oldLevel,
+            Base::GetLogLevelName(oldLevel));
+        hChannel->isSuccess = true;
+        return false;
+    }
+ 
+    uint8_t newLevel = oldLevel;
+    if (!Base::ParseLogLevel(parameters, newLevel)) {
+        EchoClient(hChannel, MSG_FAIL, "Usage: server loglevel [0-6]");
+        hChannel->isSuccess = false;
+        return false;
+    }
+ 
+    Base::SetLogLevel(newLevel);
+    HdcServer *ptrServer = static_cast<HdcServer *>(clsServer);
+    HdcHostUSB *usbClt = ptrServer->clsUSBClt;
+    if (usbClt != nullptr) {
+        int usbResult = usbClt->SetLibusbLogLevel();
+        if (usbResult != LIBUSB_SUCCESS) {
+            WRITE_LOG(LOG_WARN, "Set libusb log level failed:%d", usbResult);
+        }
+    }
+    EchoClient(hChannel, MSG_OK, "Server log level changed: %u (%s) -> %u (%s)", oldLevel,
+        Base::GetLogLevelName(oldLevel), newLevel, Base::GetLogLevelName(newLevel));
+    hChannel->isSuccess = true;
+    return false;
+}
+
+bool HdcServerForClient::DoCommandLocal(HChannel hChannel, void *formatCommandInput)
+{
+    StartTraceScope("HdcServerForClient::DoCommandLocal");
+    TranslateCommand::FormatCommand *formatCommand = (TranslateCommand::FormatCommand *)formatCommandInput;
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    bool ret = false;
+    // Main thread command, direct Listen main thread
+    switch (formatCommand->cmdFlag) {
+        case CMD_KERNEL_TARGET_DISCOVER: {
+            OrderFindTargets(hChannel);
+            hChannel->isSuccess = true;
+            ret = false;
+            break;
+        }
+        case CMD_KERNEL_TARGET_LIST: {
+            GetTargetList(hChannel, formatCommandInput);
+            hChannel->isSuccess = true;
+            ret = false;
+            break;
+        }
+        case CMD_SERVICE_START: {
+            PrintLastError(hChannel);
+            hChannel->isSuccess = true;
+            ret = false;
+            break;
+        }
+#ifdef HOST_OHOS
+        case CMD_SERVER_KILL: {
+            WRITE_LOG(LOG_FATAL, "CMD_SERVER_KILL command");
+            ptrServer->SessionSoftReset();
+            hChannel->isSuccess  = true;
+            EchoClient(hChannel, MSG_OK, "Kill server finish");
+            _exit(0);
+        }
+#endif
+        case CMD_CHECK_SERVER: {
+            WRITE_LOG(LOG_DEBUG, "CMD_CHECK_SERVER command");
+            ReportServerVersion(hChannel);
+            hChannel->isSuccess = true;
+            ret = false;
+            break;
+        }
+        case CMD_SERVER_LOG_LEVEL: {
+            ret = DoServerLogLevel(hChannel, formatCommand->parameters);
+            break;
+        }
+        case CMD_WAIT_FOR: {
+            WRITE_LOG(LOG_DEBUG, "CMD_WAIT_FOR command");
+            ret = !WaitForAny(hChannel);
+            hChannel->isSuccess = true;
+            break;
+        }
+        case CMD_KERNEL_TARGET_ANY: {
+#ifdef HDC_DEBUG
+            WRITE_LOG(LOG_DEBUG, "%s CMD_KERNEL_TARGET_ANY %s", __FUNCTION__, formatCommand->parameters.c_str());
+#endif
+            ret = GetAnyTarget(hChannel);
+            hChannel->isSuccess = ret;
+            break;
+        }
+        case CMD_KERNEL_TARGET_CONNECT: {
+#ifdef HDC_DEBUG
+            WRITE_LOG(LOG_DEBUG, "%s CMD_KERNEL_TARGET_CONNECT %s", __FUNCTION__, formatCommand->parameters.c_str());
+#endif
+            ret = NewConnectTry(ptrServer, hChannel, formatCommand->parameters.c_str());
+            hChannel->isSuccess = ret;
+            break;
+        }
+        case CMD_CHECK_DEVICE: {
+            WRITE_LOG(LOG_INFO, "%s CMD_CHECK_DEVICE %s", __FUNCTION__, formatCommand->parameters.c_str());
+            hChannel->isCheck = true;
+            hChannel->key = formatCommand->parameters.c_str();
+            ret = NewConnectTry(ptrServer, hChannel, formatCommand->parameters.c_str(), true);
+            hChannel->isSuccess = ret;
+            break;
+        }
+        case CMD_KERNEL_TARGET_DISCONNECT: {
+            CommandRemoveSession(hChannel, formatCommand->parameters.c_str());
+            hChannel->isSuccess = true;
+            break;
+        }
+        case CMD_KERNEL_TARGET_RECONNECT: {
+            hChannel->isSuccess = CommandReconnectTarget(hChannel, formatCommand->parameters.c_str());
+            break;
+        }
+        // task will be global task，Therefore, it can only be controlled in the global session.
+        case CMD_FORWARD_LIST: {
+            HForwardInfo hfi = nullptr;  // dummy
+            string echo = ptrServer->AdminForwardMap(OP_GET_STRLIST_FULL, "", hfi);
+            if (!echo.length()) {
+                echo = EMPTY_ECHO;
+            }
+            EchoClient(hChannel, MSG_OK, echo);
+            hChannel->isSuccess = true;
+            break;
+        }
+        case CMD_FORWARD_REMOVE: {
+            RemoveForward(hChannel, formatCommand->parameters.c_str());
+            hChannel->isSuccess = true;
+            break;
+        }
+        case CMD_KERNEL_ENABLE_KEEPALIVE: {
+            // just use for 'list targets' now
+            hChannel->keepAlive = true;
+            ret = true;
+            hChannel->isSuccess = true;
+            break;
+        }
+        case CMD_SPAWN_SUB: {
+            ProcessSubserver(hChannel, formatCommand->parameters);
+            hChannel->isSuccess = true;
+            ret = true;
+            break;
+        }
+        default: {
+            EchoClient(hChannel, MSG_FAIL, "ExecuteCommand need connect-key? please confirm a device by help info");
+            FillChannelResult(hChannel, false, "found no devices");
+            break;
+        }
+    }
+    return ret;
+}
+
+bool HdcServerForClient::RegisterHostPermit(const HChannel hChannel, const string &parameters)
+{
+    int argc = 0;
+    char **argv = Base::SplitCommandToArgs(parameters.c_str(), &argc);
+    bool argsValid = argv != nullptr && argc > 0;
+    string command = argsValid ? argv[0] : "";
+    bool valid = false;
+    if (command == "recv") {
+        valid = RegisterRecvPermit(hChannel, argc, argv);
+    } else if (command == "rport" || command == "fport") {
+        valid = RegisterForwardPermit(hChannel, argc, argv);
+    } else if (!argsValid) {
+        WRITE_LOG(LOG_WARN, "Reject invalid host receive command arguments cid:%u", hChannel->channelId);
+    }
+    if (!valid) {
+        RemoveHostReceivePermit(hChannel->channelId);
+    }
+    delete[](reinterpret_cast<char *>(argv));
+    return valid;
+}
+
+bool HdcServerForClient::RegisterRecvPermit(const HChannel hChannel, const int argc, char **argv)
+{
+    string cwd;
+    string lastPath;
+    size_t pathCount = 0;
+    bool valid = ParseHostReceiveArguments(argc, argv, cwd, lastPath, pathCount);
+    string targetPath;
+    if (valid) {
+        string localPath = pathCount == 1 ? "." : lastPath;
+        valid = ResolveHostReceiveTargetPath(cwd, localPath, targetPath);
+    }
+    if (valid) {
+        HostReceivePermit permit = {hChannel->targetSessionId, targetPath};
+        valid = StoreHostPermit(hChannel->channelId, permit);
+    } else {
+        WRITE_LOG(LOG_WARN, "Reject invalid host receive command cid:%u", hChannel->channelId);
+    }
+    return valid;
+}
+
+bool HdcServerForClient::RegisterForwardPermit(const HChannel hChannel, const int argc, char **argv)
+{
+    constexpr int kForwardArgCount = 3;
+    if (argc < kForwardArgCount) {
+        WRITE_LOG(LOG_WARN, "Reject invalid forward command arguments cid:%u argc:%d", hChannel->channelId, argc);
+        return false;
+    }
+    HostReceivePermit record = {hChannel->targetSessionId, argv[2]};
+    return StoreHostPermit(hChannel->channelId, record);
+}
+
+bool HdcServerForClient::StoreHostPermit(const uint32_t channelId, const HostReceivePermit &permit)
+{
+    std::lock_guard<std::mutex> lock(hostReceiveStateMutex);
+    bool stored = hostReceivePermits.emplace(channelId, permit).second;
+    if (stored) {
+        WRITE_LOG(LOG_DEBUG, "StoreHostPermit channelId:%u target:%s", channelId, permit.target.c_str());
+    } else {
+        WRITE_LOG(LOG_WARN, "Reject duplicate host permit cid:%u", channelId);
+    }
+    return stored;
+}
+
+bool HdcServerForClient::MatchHostPermit(const HChannel hChannel, const uint32_t sessionId, HostReceivePermit &permit)
+{
+    std::lock_guard<std::mutex> lock(hostReceiveStateMutex);
+    auto it = hostReceivePermits.find(hChannel->channelId);
+    if (it == hostReceivePermits.end() || it->second.sessionId != sessionId ||
+        hChannel->targetSessionId != sessionId) {
+        return false;
+    }
+    permit = it->second;
+    return true;
+}
+
+void HdcServerForClient::RemoveHostReceivePermit(const uint32_t channelId)
+{
+    std::lock_guard<std::mutex> lock(hostReceiveStateMutex);
+
+    hostReceivePermits.erase(channelId);
+}
+
+void HdcServerForClient::NotifyInstanceChannelFree(HChannel hChannel)
+{
+    RemoveHostReceivePermit(hChannel->channelId);
+}
+
+void HdcServerForClient::RemoveHostReceivePermitsBySession(const uint32_t sessionId)
+{
+    std::lock_guard<std::mutex> lock(hostReceiveStateMutex);
+
+    for (auto it = hostReceivePermits.begin(); it != hostReceivePermits.end();) {
+        if (it->second.sessionId == sessionId) {
+            it = hostReceivePermits.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+bool HdcServerForClient::CheckHostReceivePermit(const HChannel hChannel, const uint32_t sessionId, uint8_t *payload,
+    const int payloadSize)
+{
+    uint32_t channelId = hChannel->channelId;
+
+    HostReceivePermit permit;
+    if (!MatchHostPermit(hChannel, sessionId, permit)) {
+        WRITE_LOG(LOG_WARN, "Reject unmatched host receive permit cid:%u sid:%s", channelId,
+            Hdc::MaskSessionIdToString(sessionId).c_str());
+        return false;
+    }
+
+    HdcTransferBase::TransferConfig config;
+    string serialString(reinterpret_cast<char *>(payload), payloadSize);
+    if (!SerialStruct::ParseFromString(config, serialString)) {
+        WRITE_LOG(LOG_WARN, "Reject invalid host receive config cid:%u sid:%s", channelId,
+            Hdc::MaskSessionIdToString(sessionId).c_str());
+        return false;
+    }
+    if (!IsHostReceiveChildPath(config.optionalName)) {
+        WRITE_LOG(LOG_WARN, "Reject invalid host receive optional path cid:%u sid:%s", channelId,
+            Hdc::MaskSessionIdToString(sessionId).c_str());
+        return false;
+    }
+    string targetPath;
+    if (!ResolveHostReceiveTargetPath(config.clientCwd, config.path, targetPath)) {
+        WRITE_LOG(LOG_WARN, "Reject empty host receive target cid:%u sid:%s", channelId,
+            Hdc::MaskSessionIdToString(sessionId).c_str());
+        return false;
+    }
+    if (targetPath != permit.target) {
+        WRITE_LOG(LOG_WARN, "Reject mismatched host receive target cid:%u sid:%s", channelId,
+            Hdc::MaskSessionIdToString(sessionId).c_str());
+        return false;
+    }
+    return true;
+}
+
+bool HdcServerForClient::CheckForwardEndpoint(const HChannel hChannel, const uint32_t sessionId, uint8_t *payload,
+    const int payloadSize)
+{
+    constexpr int forwardParameterBufSize = 8;
+    if (payload == nullptr || payloadSize < DWORD_SERIALIZE_SIZE + forwardParameterBufSize + 1) {
+        WRITE_LOG(LOG_WARN, "Reject invalid forward active slave payload cid:%u sid:%s", hChannel->channelId,
+            Hdc::MaskSessionIdToString(sessionId).c_str());
+        return false;
+    }
+    const char *endpointInPayload =
+        reinterpret_cast<const char *>(payload + DWORD_SERIALIZE_SIZE + forwardParameterBufSize);
+    size_t maxLen = payloadSize - DWORD_SERIALIZE_SIZE - forwardParameterBufSize;
+    size_t receiveLen = strnlen(endpointInPayload, maxLen);
+    if (receiveLen == maxLen) {
+        WRITE_LOG(LOG_WARN, "Reject unterminated forward endpoint cid:%u sid:%s", hChannel->channelId,
+            Hdc::MaskSessionIdToString(sessionId).c_str());
+        return false;
+    }
+    string receiveEndpoint(endpointInPayload, receiveLen);
+
+    HostReceivePermit permit;
+    if (!MatchHostPermit(hChannel, sessionId, permit)) {
+        WRITE_LOG(LOG_WARN, "Reject unmatched forward endpoint permit cid:%u sid:%s", hChannel->channelId,
+            Hdc::MaskSessionIdToString(sessionId).c_str());
+        return false;
+    }
+    if (permit.target != receiveEndpoint) {
+        WRITE_LOG(LOG_FATAL, "Reject mismatched forward endpoint cid:%u sid:%s receive:%s", hChannel->channelId,
+            Hdc::MaskSessionIdToString(sessionId).c_str(), receiveEndpoint.c_str());
+        return false;
+    }
+    return true;
+}
+
+bool HdcServerForClient::TaskCommand(HChannel hChannel, void *formatCommandInput)
+{
+    StartTraceScope("HdcServerForClient::TaskCommand");
+    TranslateCommand::FormatCommand *formatCommand = (TranslateCommand::FormatCommand *)formatCommandInput;
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    string cmdFlag;
+    uint8_t sizeCmdFlag = 0;
+    if (formatCommand->cmdFlag == CMD_FILE_INIT) {
+        cmdFlag = "send ";
+        sizeCmdFlag = 5;  // 5: cmdFlag send size
+        HandleRemote(hChannel, formatCommand->parameters, RemoteType::REMOTE_FILE);
+        RegisterHostPermit(hChannel, formatCommand->parameters);
+    } else if (formatCommand->cmdFlag == CMD_FORWARD_INIT) {
+        cmdFlag = "fport ";
+        sizeCmdFlag = 6;  // 6: cmdFlag fport size
+        RegisterHostPermit(hChannel, formatCommand->parameters);
+    } else if (formatCommand->cmdFlag == CMD_APP_INIT) {
+        cmdFlag = "install ";
+        sizeCmdFlag = 8;  // 8: cmdFlag install size
+        HandleRemote(hChannel, formatCommand->parameters, RemoteType::REMOTE_APP);
+    } else if (formatCommand->cmdFlag == CMD_APP_UNINSTALL) {
+        cmdFlag = "uninstall ";
+        sizeCmdFlag = 10;  // 10: cmdFlag uninstall size
+    } else if (formatCommand->cmdFlag == CMD_UNITY_BUGREPORT_INIT) {
+        cmdFlag = "bugreport ";
+        sizeCmdFlag = 10;  // 10: cmdFlag bugreport size
+    } else if (formatCommand->cmdFlag == CMD_APP_SIDELOAD) {
+        cmdFlag = "sideload ";
+        sizeCmdFlag = 9; // 9: cmdFlag sideload size
+    } else if (formatCommand->cmdFlag == CMD_FLASHD_UPDATE_INIT) {
+        cmdFlag = "update ";
+        sizeCmdFlag = 7; // 7: cmdFlag update size
+    } else if (formatCommand->cmdFlag == CMD_FLASHD_FLASH_INIT) {
+        cmdFlag = "flash ";
+        sizeCmdFlag = 6; // 6: cmdFlag flash size
+    }
+    int sizeSend = formatCommand->parameters.size();
+    if (!strncmp(formatCommand->parameters.c_str(), cmdFlag.c_str(), sizeCmdFlag)) {  // local do
+        HSession hSession = FindAliveSession(hChannel->targetSessionId);
+        if (!hSession) {
+            return false;
+        }
+        if ((formatCommand->cmdFlag == CMD_FILE_INIT || formatCommand->cmdFlag == CMD_APP_INIT) &&
+            hChannel->fromClient) {
+            // remote client mode, CMD_FILE_INIT and CMD_APP_INIT command send back to client
+            WRITE_LOG(LOG_INFO, "CMD_FILE_INIT|CMD_APP_INIT command send back to remote client, cid:%u",
+                hChannel->channelId);
+            SendChannelWithCmd(hChannel, formatCommand->cmdFlag,
+                reinterpret_cast<uint8_t *>(const_cast<char *>(formatCommand->parameters.c_str())) + sizeCmdFlag,
+                sizeSend - sizeCmdFlag);
+            return false;
+        }
+        ptrServer->DispatchTaskData(hSession, hChannel->channelId, formatCommand->cmdFlag,
+            reinterpret_cast<uint8_t *>(const_cast<char *>(formatCommand->parameters.c_str())) + sizeCmdFlag,
+            sizeSend - sizeCmdFlag);
+    } else {  // Send to Daemon-side to do
+        SendToDaemon(hChannel, formatCommand->cmdFlag,
+            reinterpret_cast<uint8_t *>(const_cast<char *>(formatCommand->parameters.c_str())) + sizeCmdFlag,
+            sizeSend - sizeCmdFlag);
+    }
+    return true;
+}
+
+void HdcServerForClient::HandleRemote(HChannel hChannel, string &parameters, RemoteType flag)
+{
+    StartTraceScope("HdcServerForClient::HandleRemote");
+    hChannel->remote = flag;
+    int argc = 0;
+    char **argv = Base::SplitCommandToArgs(parameters.c_str(), &argc);
+    for (int i = 0; i < argc; i++) {
+        if (argv[i] == CMDSTR_REMOTE_PARAMETER) {
+            hChannel->fromClient = true;
+            WRITE_LOG(LOG_DEBUG, "remote client mode channelId:%u", hChannel->channelId);
+            break;
+        }
+    }
+    if (hChannel->fromClient) {
+        string remote = CMDSTR_REMOTE_PARAMETER + " ";
+        if (parameters.find(remote) != std::string::npos) {
+            parameters.replace(parameters.find(remote), remote.size(), "");
+            WRITE_LOG(LOG_DEBUG, "parameters: %s", Hdc::MaskString(parameters).c_str());
+        }
+    }
+    delete[](reinterpret_cast<char *>(argv));
+}
+
+#ifdef __OHOS__
+bool HdcServerForClient::IsServerTransfer(HChannel hChannel, uint16_t cmdFlag, string &parameters)
+{
+    if (cmdFlag == CMD_FILE_INIT || cmdFlag== CMD_APP_INIT) {
+        HandleRemote(hChannel, parameters, RemoteType::REMOTE_FILE);
+        if (!hChannel->fromClient) {
+            EchoClient(hChannel, MSG_FAIL, "[E005200] Unsupport file command");
+            return false;
+        }
+    }
+    return true;
+}
+#endif
+
+bool HdcServerForClient::DoCommandRemote(HChannel hChannel, void *formatCommandInput)
+{
+    StartTraceScope("HdcServerForClient::DoCommandRemote");
+    TranslateCommand::FormatCommand *formatCommand = (TranslateCommand::FormatCommand *)formatCommandInput;
+    bool ret = false;
+    int sizeSend = formatCommand->parameters.size();
+    switch (formatCommand->cmdFlag) {
+        // Some simple commands only need to forward the instruction, no need to start Task
+        case CMD_SHELL_INIT:
+        case CMD_SHELL_DATA:
+        case CMD_UNITY_EXECUTE:
+        case CMD_UNITY_EXECUTE_EX:
+        case CMD_UNITY_REMOUNT:
+        case CMD_UNITY_REBOOT:
+        case CMD_UNITY_RUNMODE:
+        case CMD_UNITY_HILOG:
+        case CMD_UNITY_ROOTRUN:
+        case CMD_JDWP_TRACK:
+        case CMD_JDWP_LIST: {
+            if (!SendToDaemon(hChannel, formatCommand->cmdFlag,
+                reinterpret_cast<uint8_t *>(const_cast<char *>(formatCommand->parameters.c_str())), sizeSend)) {
+                break;
+            }
+            ret = true;
+            if (formatCommand->cmdFlag == CMD_SHELL_INIT) {
+                hChannel->interactiveShellMode = true;
+            }
+            break;
+        }
+        case CMD_FILE_INIT:
+        case CMD_FORWARD_INIT:
+        case CMD_APP_INIT: {
+#ifdef __OHOS__
+            if (!IsServerTransfer(hChannel, formatCommand->cmdFlag, formatCommand->parameters)) {
+                return false;
+            }
+#endif
+        }
+        case CMD_APP_UNINSTALL:
+        case CMD_UNITY_BUGREPORT_INIT:
+        case CMD_APP_SIDELOAD:
+        case CMD_FLASHD_UPDATE_INIT:
+        case CMD_FLASHD_FLASH_INIT:
+        case CMD_FLASHD_ERASE:
+        case CMD_FLASHD_FORMAT: {
+            TaskCommand(hChannel, formatCommandInput);
+            ret = true;
+            break;
+        }
+        default:
+            break;
+    }
+    if (!ret) {
+        EchoClient(hChannel, MSG_FAIL, "[E002106] Failed to communicate with daemon");
+    }
+    return ret;
+}
+// Do not specify Target's operations no longer need to put it in the thread.
+bool HdcServerForClient::DoCommand(HChannel hChannel, void *formatCommandInput, HDaemonInfo &hdi)
+{
+    StartTraceScope("HdcServerForClient::DoCommand");
+    bool ret = false;
+    TranslateCommand::FormatCommand *formatCommand = (TranslateCommand::FormatCommand *)formatCommandInput;
+#ifdef __OHOS__
+    if ((!hChannel->hChildWorkTCP.loop && !hChannel->hChildWorkUds.loop) ||
+#else
+    if (!hChannel->hChildWorkTCP.loop ||
+#endif
+        formatCommand->cmdFlag == CMD_FORWARD_REMOVE ||
+#ifdef HOST_OHOS
+        formatCommand->cmdFlag == CMD_SERVER_KILL ||
+#endif
+        formatCommand->cmdFlag == CMD_SPAWN_SUB ||
+        formatCommand->cmdFlag == CMD_SERVICE_START ||
+        formatCommand->cmdFlag == CMD_SERVER_LOG_LEVEL) {
+        hChannel->commandFlag = formatCommand->cmdFlag;
+        hChannel->commandParameters = formatCommand->parameters;
+        // Main thread command, direct Listen main thread
+        ret = DoCommandLocal(hChannel, formatCommandInput);
+    } else {  // CONNECT DAEMON's work thread command, non-primary thread
+        if (!CommandMatchDaemonFeature(formatCommand->cmdFlag, hdi)) {
+            // only the cmdFlag in the FEATURE_VERSION_MATCH_MAP needs to be checked, others to permissive.
+            WRITE_LOG(LOG_WARN, "unsupport cmdFlag: %d, due to daemon feature dismatch", formatCommand->cmdFlag);
+            EchoClient(hChannel, MSG_FAIL, "[E002105] Unsupport command");
+            return false;
+        }
+        if (formatCommand->cmdFlag != CMD_SHELL_DATA) {
+            hChannel->commandFlag = formatCommand->cmdFlag;
+            hChannel->commandParameters = formatCommand->parameters;
+        }
+        ret = DoCommandRemote(hChannel, formatCommandInput);
+    }
+    return ret;
+}
+
+// just call from BindChannelToSession
+HSession HdcServerForClient::FindAliveSessionFromDaemonMap(const HChannel hChannel)
+{
+    StartTraceScope("HdcServerForClient::FindAliveSessionFromDaemonMap");
+    HSession hSession = nullptr;
+    HDaemonInfo hdi = nullptr;
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    ptrServer->AdminDaemonMap(OP_QUERY, hChannel->connectKey, hdi);
+    if (!hdi) {
+        WRITE_LOG(LOG_WARN, "Not match target founded cid:%u", hChannel->channelId);
+        FillChannelResult(hChannel, false, "no match targets found");
+        EchoClient(hChannel, MSG_FAIL, "Not match target founded, check connect-key please");
+        return nullptr;
+    }
+    if (hdi->connStatus != STATUS_CONNECTED) {
+        WRITE_LOG(LOG_WARN, "Device not found or connected cid:%u", hChannel->channelId);
+        string errorInfo = "[E001005] Device not found or connected";
+        if (!hdi->faultInfo.empty()) {
+            errorInfo += "\r\n" + GetDaemonConnectionError(hdi);
+        }
+        FillChannelResult(hChannel, false, "device not found or connected");
+        EchoClient(hChannel, MSG_FAIL, errorInfo);
+        return nullptr;
+    }
+    if (hdi->hSession == nullptr) {
+        WRITE_LOG(LOG_WARN, "session is null cid:%u", hChannel->channelId);
+        FillChannelResult(hChannel, false, "bind target session is null");
+        EchoClient(hChannel, MSG_FAIL, "Bind tartget session is dead");
+        return nullptr;
+    }
+    if (hdi->hSession->isDead) {
+        WRITE_LOG(LOG_WARN, "session is dead cid:%u sid:%s", hChannel->channelId,
+            Hdc::MaskSessionIdToString(hdi->hSession->sessionId).c_str());
+        FillChannelResult(hChannel, false, "bind target session is dead");
+        EchoClient(hChannel, MSG_FAIL, "Bind tartget session is dead");
+        return nullptr;
+    }
+    if (!hdi->hSession->handshakeOK) {
+        WRITE_LOG(LOG_WARN, "hSession handShake is false sid:%s cid:%u",
+            Hdc::MaskSessionIdToString(hdi->hSession->sessionId).c_str(), hChannel->channelId);
+        FillChannelResult(hChannel, false, "handshake is not ready");
+        const string errMsg = "[E000004]:The communication channel is being established.\r\n"\
+            "Please wait for several seconds and try again.";
+        EchoClient(hChannel, MSG_FAIL, errMsg.c_str());
+        return nullptr;
+    }
+    hSession = reinterpret_cast<HSession>(hdi->hSession);
+    return hSession;
+}
+
+#ifdef __OHOS__
+int HdcServerForClient::BindChannelToSession(HChannel hChannel)
+{
+    StartTraceScope("HdcServerForClient::BindChannelToSession");
+    if (FindAliveSessionFromDaemonMap(hChannel) == nullptr) {
+        WRITE_LOG(LOG_FATAL, "Find no alive session channelId:%u", hChannel->channelId);
+        return ERR_SESSION_NOFOUND;
+    }
+    bool isClosing = false;
+    if (!hChannel->isUds) {
+        isClosing = uv_is_closing((const uv_handle_t *)&hChannel->hWorkTCP);
+        if (!isClosing && (hChannel->fdChildWorkTCP = Base::DuplicateUvSocket(&hChannel->hWorkTCP)) < 0) {
+            WRITE_LOG(LOG_FATAL, "Duplicate socket failed channelId:%u", hChannel->channelId);
+            return ERR_SOCKET_DUPLICATE;
+        }
+    } else {
+        isClosing = uv_is_closing((const uv_handle_t *)&hChannel->hWorkUds);
+        if (!isClosing && (hChannel->fdChildWorkTCP = Base::DuplicateUvPipe(&hChannel->hWorkUds)) < 0) {
+            WRITE_LOG(LOG_FATAL, "Duplicate pipe failed channelId:%u", hChannel->channelId);
+            return ERR_SOCKET_DUPLICATE;
+        }
+    }
+
+    uv_close_cb funcWorkTcpClose = [](uv_handle_t *handle) -> void {
+        HChannel hChannel = (HChannel)handle->data;
+        --hChannel->ref;
+    };
+    ++hChannel->ref;
+    if (!isClosing) {
+        if (!hChannel->isUds) {
+            uv_close((uv_handle_t *)&hChannel->hWorkTCP, funcWorkTcpClose);
+        } else {
+            uv_close((uv_handle_t *)&hChannel->hWorkUds, funcWorkTcpClose);
+        }
+    }
+    Base::DoNextLoop(loopMain, hChannel, [](const uint8_t flag, string &msg, const void *data) {
+        // Thread message can avoid using thread lock and improve program efficiency
+        // If not next loop call, ReadStream will thread conflict
+        HChannel hChannel = (HChannel)data;
+        auto thisClass = (HdcServerForClient *)hChannel->clsChannel;
+        HSession hSession = nullptr;
+        if ((hSession = thisClass->FindAliveSessionFromDaemonMap(hChannel)) == nullptr) {
+            WRITE_LOG(LOG_FATAL, "hSession nullptr channelId:%u", hChannel->channelId);
+            return;
+        }
+        auto ctrl = HdcSessionBase::BuildCtrlString(SP_ATTACH_CHANNEL, hChannel->channelId, nullptr, 0);
+        Base::SendToPollFd(hSession->ctrlFd[STREAM_MAIN], ctrl.data(), ctrl.size());
+    });
+    return RET_SUCCESS;
+}
+#else
+int HdcServerForClient::BindChannelToSession(HChannel hChannel)
+{
+    StartTraceScope("HdcServerForClient::BindChannelToSession");
+    if (FindAliveSessionFromDaemonMap(hChannel) == nullptr) {
+        WRITE_LOG(LOG_FATAL, "Find no alive session channelId:%u", hChannel->channelId);
+        return ERR_SESSION_NOFOUND;
+    }
+    bool isClosing = uv_is_closing((const uv_handle_t *)&hChannel->hWorkTCP);
+    if (!isClosing && (hChannel->fdChildWorkTCP = Base::DuplicateUvSocket(&hChannel->hWorkTCP)) < 0) {
+        WRITE_LOG(LOG_FATAL, "Duplicate socket failed channelId:%u", hChannel->channelId);
+        return ERR_SOCKET_DUPLICATE;
+    }
+
+    uv_close_cb funcWorkTcpClose = [](uv_handle_t *handle) -> void {
+        HChannel hChannel = (HChannel)handle->data;
+        --hChannel->ref;
+    };
+    ++hChannel->ref;
+    if (!isClosing) {
+        uv_close((uv_handle_t *)&hChannel->hWorkTCP, funcWorkTcpClose);
+    }
+    Base::DoNextLoop(loopMain, hChannel, [](const uint8_t flag, string &msg, const void *data) {
+        // Thread message can avoid using thread lock and improve program efficiency
+        // If not next loop call, ReadStream will thread conflict
+        HChannel hChannel = (HChannel)data;
+        auto thisClass = (HdcServerForClient *)hChannel->clsChannel;
+        HSession hSession = nullptr;
+        if ((hSession = thisClass->FindAliveSessionFromDaemonMap(hChannel)) == nullptr) {
+            WRITE_LOG(LOG_FATAL, "hSession nullptr channelId:%u", hChannel->channelId);
+            return;
+        }
+        auto ctrl = HdcSessionBase::BuildCtrlString(SP_ATTACH_CHANNEL, hChannel->channelId, nullptr, 0);
+        Base::SendToPollFd(hSession->ctrlFd[STREAM_MAIN], ctrl.data(), ctrl.size());
+    });
+    return RET_SUCCESS;
+}
+#endif
+
+bool HdcServerForClient::CheckAutoFillTarget(HChannel hChannel)
+{
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    if (!hChannel->connectKey.size()) {
+        WRITE_LOG(LOG_FATAL, "connectKey.size 0 channelId:%u", hChannel->channelId);
+        return false;  // Operation of non-bound destination of scanning
+    }
+    if (hChannel->connectKey == CMDSTR_CONNECT_ANY) {
+        HDaemonInfo hdiOld = nullptr;
+        ptrServer->AdminDaemonMap(OP_GET_ONLY, "", hdiOld);
+        if (!hdiOld) {
+            WRITE_LOG(LOG_WARN, "No any key found channelId:%u", hChannel->channelId);
+            return false;
+        }
+        if (!hdiOld->hSession) {
+            WRITE_LOG(LOG_WARN, "hSession is null. channelId:%u", hChannel->channelId);
+            return false;
+        }
+        if (!hdiOld->hSession->handshakeOK) {
+            WRITE_LOG(LOG_WARN, "hSession handShake is false SessionId:%s",
+                Hdc::MaskSessionIdToString(hdiOld->hSession->sessionId).c_str());
+            return false;
+        }
+        hChannel->connectKey = hdiOld->connectKey;
+        return true;
+    }
+    return true;
+}
+
+int HdcServerForClient::ChannelHandShake(HChannel hChannel, uint8_t *bufPtr, const int bytesIO)
+{
+    StartTraceScope("HdcServerForClient::ChannelHandShake");
+    vector<uint8_t> rebuildHandshake;
+    rebuildHandshake.insert(rebuildHandshake.end(), bufPtr, bufPtr + bytesIO);
+    rebuildHandshake.push_back(0x00);
+    struct ChannelHandShake *handShake = reinterpret_cast<struct ChannelHandShake *>(rebuildHandshake.data());
+    if (strncmp(handShake->banner, HANDSHAKE_MESSAGE.c_str(), HANDSHAKE_MESSAGE.size())) {
+        hChannel->availTailIndex = 0;
+        WRITE_LOG(LOG_DEBUG, "Channel Hello failed");
+        return ERR_HANDSHAKE_NOTMATCH;
+    }
+    if (strlen(handShake->connectKey) > sizeof(handShake->connectKey)) {
+        hChannel->availTailIndex = 0;
+        WRITE_LOG(LOG_DEBUG, "Connectkey's size incorrect");
+        return ERR_HANDSHAKE_CONNECTKEY_FAILED;
+    }
+    std::string sessionIdMaskStr = Hdc::MaskSessionIdToString(hChannel->targetSessionId);
+    // channel handshake step3
+    WRITE_LOG(LOG_DEBUG, "ServerForClient cid:%u sid:%s handshake finished", hChannel->channelId,
+        sessionIdMaskStr.c_str());
+    hChannel->connectKey = handShake->connectKey;
+    hChannel->handshakeOK = true;
+    if (handShake->banner[WAIT_TAG_OFFSET] == WAIT_DEVICE_TAG || !CheckAutoFillTarget(hChannel)) {
+        WRITE_LOG(LOG_WARN, "No target channelId:%u", hChannel->channelId);
+        return 0;
+    }
+    // channel handshake stBindChannelToSession
+    if (BindChannelToSession(hChannel)) {
+        hChannel->availTailIndex = 0;
+        WRITE_LOG(LOG_FATAL, "BindChannelToSession failed channelId:%u sid:%s",
+            hChannel->channelId, sessionIdMaskStr.c_str());
+        return ERR_GENERIC;
+    }
+    return 0;
+}
+
+void HdcServerForClient::ReportServerVersion(HChannel hChannel)
+{
+    string version = Base::GetVersion();
+    SendChannelWithCmd(hChannel, CMD_CHECK_SERVER,
+                       const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(version.c_str())),
+                       version.size());
+}
+
+#ifdef __OHOS__
+static bool ReportCommandEvent(uint8_t *bufPtr, const int bytesIO, bool isIntercepted)
+{
+#ifdef HDC_SUPPORT_REPORT_COMMAND_EVENT
+    if (!DelayedSingleton<CommandEventReport>::GetInstance()->ReportCommandEvent(
+        std::string(reinterpret_cast<char *>(bufPtr), bytesIO), Base::GetCaller(), isIntercepted)) {
+        WRITE_LOG(LOG_FATAL,
+            "[E00C002]Execution intercepted due to inaccessibility of reporting command event.");
+        return false;
+        }
+#endif
+    return true;
+}
+#endif
+
+// server directly passthrough file command to daemon
+bool HdcServerForClient::TrySendRemotePassthrough(HChannel hChannel, uint8_t *bufPtr, const int bytesIO)
+{
+    if (bytesIO < static_cast<int>(sizeof(uint16_t))) {
+        WRITE_LOG(LOG_WARN, "ReadChannel remote payload too short bytesIO:%d cid:%u", bytesIO,
+            hChannel->channelId);
+        return false;
+    }
+    uint16_t command = *reinterpret_cast<uint16_t *>(bufPtr);
+    if (command != 0 && (hChannel->remote > RemoteType::REMOTE_NONE)) {
+        // server directly passthrough file command to daemon
+        if (!SendToDaemon(hChannel, command, bufPtr + sizeof(uint16_t), bytesIO - sizeof(uint16_t))) {
+            WRITE_LOG(LOG_FATAL, "Client ReadChannel : direct send to daemon failed");
+        }
+        return true;
+    }
+    return false;
+}
+
+// Here is Server to get data, the source is the SERVER's ChildWork to send data
+int HdcServerForClient::ReadChannel(HChannel hChannel, uint8_t *bufPtr, const int bytesIO)
+{
+    StartTraceScope("HdcServerForClient::ReadChannel");
+    if (!hChannel->handshakeOK) {
+        return ChannelHandShake(hChannel, bufPtr, bytesIO);
+    }
+#ifdef __OHOS__
+    bool isIntercepted = IsNeedInterceptCommand();
+    if (!ReportCommandEvent(bufPtr, bytesIO, isIntercepted)) {
+        EchoClient(hChannel, MSG_FAIL,
+            "[E00C002]Execution intercepted due to inaccessibility of reporting command event.");
+        return ERR_GENERIC;
+    }
+    if (isIntercepted) {
+        EchoClient(hChannel, MSG_FAIL, "[E00C001]Operation restricted by the organization.");
+        WRITE_LOG(LOG_FATAL, "[E00C001]Server Operation restricted by the organization.");
+        return ENTERPRISE_HDC_DISABLE_ERR;
+    }
+#endif
+    HDaemonInfo hdi = nullptr;
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    ptrServer->AdminDaemonMap(OP_QUERY, hChannel->connectKey, hdi);
+    if (hdi && !hdi->emgmsg.empty()) {
+        EchoClient(hChannel, MSG_FAIL, hdi->emgmsg.c_str());
+        return ERR_GENERIC;
+    }
+    uint16_t command = *reinterpret_cast<uint16_t *>(bufPtr);
+    if (TrySendRemotePassthrough(hChannel, bufPtr, bytesIO)) {
+        return 0;
+    }
+    struct TranslateCommand::FormatCommand formatCommand = {};
+    if (!hChannel->interactiveShellMode) {
+        string retEcho = String2FormatCommand(reinterpret_cast<char *>(bufPtr), bytesIO, &formatCommand);
+        if (retEcho.length()) {
+            if (!strncmp(reinterpret_cast<char *>(bufPtr), CMDSTR_SOFTWARE_HELP.c_str(),
+                CMDSTR_SOFTWARE_HELP.size()) ||
+                !strcmp(reinterpret_cast<char *>(bufPtr), CMDSTR_SOFTWARE_VERSION.c_str()) ||
+                !strcmp(reinterpret_cast<char *>(bufPtr), "flash")) {
+                EchoClient(hChannel, MSG_OK, retEcho.c_str());
+            } else {
+                EchoClient(hChannel, MSG_FAIL, retEcho.c_str());
+            }
+        }
+
+        WRITE_LOG(LOG_INFO, "ReadChannel cid:%u sid:%s key:%s", hChannel->channelId,
+            Hdc::MaskSessionIdToString(hChannel->targetSessionId).c_str(),
+            Hdc::MaskString(hChannel->connectKey).c_str());
+
+        if (Hdc::Base::GetCmdLogSwitch()) {
+#ifdef SUPPORT_DETAILE_HDC_CMD_LOG
+            string logBuf = Base::CmdLogStringFormat(hChannel->targetSessionId, (reinterpret_cast<char *>(bufPtr)));
+#else
+            std::string cmdStr = std::to_string(command);
+            string logBuf = Base::CmdLogStringFormat(hChannel->targetSessionId, cmdStr.c_str());
+#endif
+            if (logBuf.length() > 0) {
+                ptrServer->PrintCmdLogEx(logBuf);
+            }
+        }
+        if (formatCommand.bJumpDo) {
+            WRITE_LOG(LOG_FATAL, "ReadChannel bJumpDo true");
+            return -10;  //  -10 error formatCommand
+        }
+    } else {
+        formatCommand.parameters = string(reinterpret_cast<char *>(bufPtr), bytesIO);
+        formatCommand.cmdFlag = CMD_SHELL_DATA;
+    }
+    if (!DoCommand(hChannel, &formatCommand, hdi)) {
+        return -3;  // -3: error or want close
+    }
+    return bytesIO;
+};
+
+// avoid session dead
+HSession HdcServerForClient::FindAliveSession(uint32_t sessionId)
+{
+    StartTraceScope("HdcServerForClient::FindAliveSession");
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    HSession hSession = ptrServer->AdminSession(OP_QUERY, sessionId, nullptr);
+    if (!hSession || hSession->isDead) {
+        WRITE_LOG(LOG_FATAL, "FindAliveSession hSession nullptr or isDead sessionId:%s",
+            Hdc::MaskSessionIdToString(sessionId).c_str());
+        return nullptr;
+    } else {
+        return hSession;
+    }
+}
+
+bool HdcServerForClient::ChannelSendSessionCtrlMsg(vector<uint8_t> &ctrlMsg, uint32_t sessionId)
+{
+    HSession hSession = FindAliveSession(sessionId);
+    if (!hSession) {
+        WRITE_LOG(LOG_FATAL, "ChannelSendSessionCtrlMsg hSession nullptr sessionId:%s",
+            Hdc::MaskSessionIdToString(sessionId).c_str());
+        return false;
+    }
+    int rc = Base::SendToPollFd(hSession->ctrlFd[STREAM_MAIN], ctrlMsg.data(), ctrlMsg.size());
+    if (rc <= 0) {
+        WRITE_LOG(LOG_FATAL, "send ctrlmsg failed sessionId:%s rc:%d",
+            Hdc::MaskSessionIdToString(sessionId).c_str(), rc);
+    }
+    return rc > 0;
+}
+
+void HdcServerForClient::PrintLastError(HChannel HChannel)
+{
+    HdcServer *ptrServer = (HdcServer *)clsServer;
+    uint32_t errorCode = ptrServer->lastErrorNum;
+    if (errorCode > 0) {
+        string errorString = GetErrorString(errorCode);
+        EchoClient(HChannel, MSG_FAIL, "[E%06x]%s", errorCode, errorString.c_str());
+        ptrServer->lastErrorNum = 0;
+    }
+}
+
+string HdcServerForClient::GetErrorString(uint32_t errorCode)
+{
+    auto map = ErrorStringEnglish.find(errorCode);
+    if (map != ErrorStringEnglish.end()) {
+        return map->second;
+    }
+    return ErrorStringEnglish.at(0xFFFFFF); // 0xFFFFFF:  Unknown error
+}
+
+bool HdcServerForClient::CommandMatchDaemonFeature(uint16_t cmdFlag, const HDaemonInfo &hdi)
+{
+    if (!hdi) {
+        WRITE_LOG(LOG_WARN, "CommandMatchDaemonFeature: invalid HDaemonInfo");
+        return false;
+    }
+    StartTraceScope("HdcServerForClient::CommandMatchDaemonFeature");
+    string cmdFlagStr = std::to_string(cmdFlag);
+    if (FEATURE_CHECK_SET.find(cmdFlag) == FEATURE_CHECK_SET.end()) { // not need check
+        return true;
+    }
+    auto tagMatch = hdi->daemonFeature.find(cmdFlagStr);
+    if (tagMatch == hdi->daemonFeature.end()) { // unsupport command
+        return false;
+    }
+    return (tagMatch->second == STR_FEATURE_ENABLE);
+}
+
+#ifdef __OHOS__
+bool HdcServerForClient::IsNeedInterceptCommand()
+{
+    std::string out;
+    SystemDepend::GetDevItem(SYS_PARAM_ENTERPRISE_HDC_DISABLE.c_str(), out);
+    if (out.empty() || out == "false") {
+        return false;
+    }
+    return true;
+}
+#endif
+}  // namespace Hdc

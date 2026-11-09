@@ -1,0 +1,209 @@
+// Copyright (c) 2026 TNTyep520
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use crate::tokens::ColorLightTokens;
+use gpui::{Hsla, rgb};
+
+pub fn hex(value: u32) -> Hsla {
+    rgb(value).into()
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ColorScheme {
+    pub on_primary_fixed: Hsla,
+    pub on_primary_fixed_variant: Hsla,
+    pub on_secondary_fixed: Hsla,
+    pub on_secondary_fixed_variant: Hsla,
+    pub on_tertiary_fixed: Hsla,
+    pub on_tertiary_fixed_variant: Hsla,
+    pub primary_fixed: Hsla,
+    pub primary_fixed_dim: Hsla,
+    pub secondary_fixed: Hsla,
+    pub secondary_fixed_dim: Hsla,
+    pub tertiary_fixed: Hsla,
+    pub tertiary_fixed_dim: Hsla,
+
+    pub primary: Hsla,
+    pub on_primary: Hsla,
+    pub primary_container: Hsla,
+    pub on_primary_container: Hsla,
+    pub inverse_primary: Hsla,
+
+    pub secondary: Hsla,
+    pub on_secondary: Hsla,
+    pub secondary_container: Hsla,
+    pub on_secondary_container: Hsla,
+
+    pub tertiary: Hsla,
+    pub on_tertiary: Hsla,
+    pub tertiary_container: Hsla,
+    pub on_tertiary_container: Hsla,
+
+    pub error: Hsla,
+    pub on_error: Hsla,
+    pub error_container: Hsla,
+    pub on_error_container: Hsla,
+
+    pub surface: Hsla,
+    pub on_surface: Hsla,
+    pub surface_variant: Hsla,
+    pub on_surface_variant: Hsla,
+    pub surface_dim: Hsla,
+    pub surface_bright: Hsla,
+    pub surface_container_lowest: Hsla,
+    pub surface_container_low: Hsla,
+    pub surface_container: Hsla,
+    pub surface_container_high: Hsla,
+    pub surface_container_highest: Hsla,
+    pub inverse_surface: Hsla,
+    pub inverse_on_surface: Hsla,
+
+    pub outline: Hsla,
+    pub outline_variant: Hsla,
+    pub scrim: Hsla,
+    pub shadow: Hsla,
+    pub surface_tint: Hsla,
+
+    pub background: Hsla,
+    pub on_background: Hsla,
+}
+
+impl ColorScheme {
+    pub fn light() -> Self {
+        Self {
+            on_primary_fixed: ColorLightTokens::ON_PRIMARY_FIXED.resolve(),
+            on_primary_fixed_variant: ColorLightTokens::ON_PRIMARY_FIXED_VARIANT.resolve(),
+            on_secondary_fixed: ColorLightTokens::ON_SECONDARY_FIXED.resolve(),
+            on_secondary_fixed_variant: ColorLightTokens::ON_SECONDARY_FIXED_VARIANT.resolve(),
+            on_tertiary_fixed: ColorLightTokens::ON_TERTIARY_FIXED.resolve(),
+            on_tertiary_fixed_variant: ColorLightTokens::ON_TERTIARY_FIXED_VARIANT.resolve(),
+            primary_fixed: ColorLightTokens::PRIMARY_FIXED.resolve(),
+            primary_fixed_dim: ColorLightTokens::PRIMARY_FIXED_DIM.resolve(),
+            secondary_fixed: ColorLightTokens::SECONDARY_FIXED.resolve(),
+            secondary_fixed_dim: ColorLightTokens::SECONDARY_FIXED_DIM.resolve(),
+            tertiary_fixed: ColorLightTokens::TERTIARY_FIXED.resolve(),
+            tertiary_fixed_dim: ColorLightTokens::TERTIARY_FIXED_DIM.resolve(),
+            primary: hex(0x6750A4),
+            on_primary: hex(0xFFFFFF),
+            primary_container: hex(0xEADDFF),
+            on_primary_container: hex(0x4F378B),
+            inverse_primary: hex(0xD0BCFF),
+
+            secondary: hex(0x625B71),
+            on_secondary: hex(0xFFFFFF),
+            secondary_container: hex(0xE8DEF8),
+            on_secondary_container: hex(0x4A4458),
+
+            tertiary: hex(0x7D5260),
+            on_tertiary: hex(0xFFFFFF),
+            tertiary_container: hex(0xFFD8E4),
+            on_tertiary_container: hex(0x633B48),
+
+            error: hex(0xB3261E),
+            on_error: hex(0xFFFFFF),
+            error_container: hex(0xF9DEDC),
+            on_error_container: hex(0x8C1D18),
+
+            surface: hex(0xFEF7FF),
+            on_surface: hex(0x1D1B20),
+            surface_variant: hex(0xE7E0EC),
+            on_surface_variant: hex(0x49454F),
+            surface_dim: hex(0xDED8E1),
+            surface_bright: hex(0xFEF7FF),
+            surface_container_lowest: hex(0xFFFFFF),
+            surface_container_low: hex(0xF7F2FA),
+            surface_container: hex(0xF3EDF7),
+            surface_container_high: hex(0xECE6F0),
+            surface_container_highest: hex(0xE6E0E9),
+            inverse_surface: hex(0x322F35),
+            inverse_on_surface: hex(0xF5EFF7),
+
+            outline: hex(0x79747E),
+            outline_variant: hex(0xCAC4D0),
+            scrim: hex(0x000000),
+            shadow: hex(0x000000),
+            surface_tint: hex(0x6750A4),
+
+            background: hex(0xFEF7FF),
+            on_background: hex(0x1D1B20),
+        }
+    }
+
+    pub fn dark() -> Self {
+        Self {
+            on_primary_fixed: ColorLightTokens::ON_PRIMARY_FIXED.resolve(),
+            on_primary_fixed_variant: ColorLightTokens::ON_PRIMARY_FIXED_VARIANT.resolve(),
+            on_secondary_fixed: ColorLightTokens::ON_SECONDARY_FIXED.resolve(),
+            on_secondary_fixed_variant: ColorLightTokens::ON_SECONDARY_FIXED_VARIANT.resolve(),
+            on_tertiary_fixed: ColorLightTokens::ON_TERTIARY_FIXED.resolve(),
+            on_tertiary_fixed_variant: ColorLightTokens::ON_TERTIARY_FIXED_VARIANT.resolve(),
+            primary_fixed: ColorLightTokens::PRIMARY_FIXED.resolve(),
+            primary_fixed_dim: ColorLightTokens::PRIMARY_FIXED_DIM.resolve(),
+            secondary_fixed: ColorLightTokens::SECONDARY_FIXED.resolve(),
+            secondary_fixed_dim: ColorLightTokens::SECONDARY_FIXED_DIM.resolve(),
+            tertiary_fixed: ColorLightTokens::TERTIARY_FIXED.resolve(),
+            tertiary_fixed_dim: ColorLightTokens::TERTIARY_FIXED_DIM.resolve(),
+            primary: hex(0xD0BCFF),
+            on_primary: hex(0x381E72),
+            primary_container: hex(0x4F378B),
+            on_primary_container: hex(0xEADDFF),
+            inverse_primary: hex(0x6750A4),
+
+            secondary: hex(0xCCC2DC),
+            on_secondary: hex(0x332D41),
+            secondary_container: hex(0x4A4458),
+            on_secondary_container: hex(0xE8DEF8),
+
+            tertiary: hex(0xEFB8C8),
+            on_tertiary: hex(0x492532),
+            tertiary_container: hex(0x633B48),
+            on_tertiary_container: hex(0xFFD8E4),
+
+            error: hex(0xF2B8B5),
+            on_error: hex(0x601410),
+            error_container: hex(0x8C1D18),
+            on_error_container: hex(0xF9DEDC),
+
+            surface: hex(0x141218),
+            on_surface: hex(0xE6E0E9),
+            surface_variant: hex(0x49454F),
+            on_surface_variant: hex(0xCAC4D0),
+            surface_dim: hex(0x141218),
+            surface_bright: hex(0x3B383E),
+            surface_container_lowest: hex(0x0F0D13),
+            surface_container_low: hex(0x1D1B20),
+            surface_container: hex(0x211F26),
+            surface_container_high: hex(0x2B2930),
+            surface_container_highest: hex(0x36343B),
+            inverse_surface: hex(0xE6E0E9),
+            inverse_on_surface: hex(0x322F35),
+
+            outline: hex(0x938F99),
+            outline_variant: hex(0x49454F),
+            scrim: hex(0x000000),
+            shadow: hex(0x000000),
+            surface_tint: hex(0xD0BCFF),
+
+            background: hex(0x141218),
+            on_background: hex(0xE6E0E9),
+        }
+    }
+
+    pub fn disabled_content(&self, state: &crate::theme::state::StateLayerTokens) -> Hsla {
+        self.on_surface.opacity(state.disabled_content)
+    }
+
+    pub fn disabled_container(&self, state: &crate::theme::state::StateLayerTokens) -> Hsla {
+        self.on_surface.opacity(state.disabled_container)
+    }
+}

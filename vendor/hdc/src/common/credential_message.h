@@ -1,0 +1,127 @@
+/*
+ * Copyright (C) 2025 Huawei Device Co., Ltd.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#ifndef HDC_CREDENTIAL_MESSAGE_H
+#define HDC_CREDENTIAL_MESSAGE_H
+
+#include <string>
+#include <utility>
+#include "log.h"
+#include "securec.h"
+
+class CredentialMessage {
+public:
+    CredentialMessage() = default;
+    explicit CredentialMessage(const std::string& messageStr);
+
+    CredentialMessage(const CredentialMessage&) = delete;
+    CredentialMessage& operator=(const CredentialMessage&) = delete;
+    CredentialMessage(CredentialMessage&&) = delete;
+    CredentialMessage& operator=(CredentialMessage&&) = delete;
+
+    void Init(const std::string& messageStr);
+    ~CredentialMessage();
+    int GetMessageVersion() const { return messageVersion; }
+    int GetMessageMethodType() const { return messageMethodType; }
+    int GetMessageBodyLen() const { return messageBodyLen; }
+    std::pair<char*, size_t> GetMessageBody() const;
+
+    void SetMessageVersion(int version);
+    void SetMessageMethodType(int type) { messageMethodType = type; }
+    void SetMessageBodyLen(int len) { messageBodyLen = len; }
+    void SetMessageBody(const std::string& body);
+    void SetMessageBody(const char* data, size_t len);
+    std::string Construct() const;
+
+private:
+    void AllocateAndCopy(const char* data, size_t len);
+    void ClearMessageBody();
+
+    int messageVersion = 0;
+    int messageMethodType = 0;
+    int messageBodyLen = 0;          // length of stored data in bytes
+    char* messageBody = nullptr;     // dynamically allocated buffer for message body
+    size_t messageBodyCapacity = 0;  // actual allocated memory capacity in bytes (>= messageBodyLen)
+};
+
+bool IsNumeric(const std::string& str);
+int StripLeadingZeros(const std::string& input);
+std::string IntToStringWithPadding(int length, int maxLen);
+std::string SplicMessageStr(const std::string& str, const size_t methodType, const size_t methodVersion);
+ssize_t GetCredential(const std::string &messageStr, char data[], ssize_t size);
+bool SendMessageByUnixSocket(const int sockfd, const std::string &messageStr);
+ssize_t RecvMessageByUnixSocket(const int sockfd, char data[], ssize_t size);
+std::vector<uint8_t> String2Uint8(const std::string& str, size_t len);
+void SplitString(const std::string &origString, const std::string &seq,
+                 std::vector<std::string> &resultStrings, int count = -1);
+
+constexpr size_t MESSAGE_STR_MAX_LEN = 4096;
+constexpr size_t MESSAGE_VERSION_POS = 0;
+constexpr size_t MESSAGE_METHOD_POS = 1;
+constexpr size_t MESSAGE_METHOD_LEN = 3;
+constexpr size_t MESSAGE_LENGTH_POS = 4;
+constexpr size_t MESSAGE_LENGTH_LEN = 4;
+constexpr size_t MESSAGE_BODY_POS = 8;
+
+const size_t MESSAGE_PARAM_COMMAND_EVENT_REPORT_SIZE = 6;
+const size_t MESSAGE_PARAM_RETURN_MAX_SIZE = 32;
+const std::string HDC_COMMAND_REPORT = "usual.event.HDC_COMMAND_REPORT";
+const std::string EVENT_PARAM_REPORT_USERID = "userId";
+const std::string EVENT_PARAM_REPORT_ROLE = "role";
+const std::string EVENT_PARAM_REPORT_STATUS = "status";
+const std::string EVENT_PARAM_REPORT_TIME = "happenTime";
+const std::string EVENT_PARAM_REPORT_COMMAND = "command";
+const std::string EVENT_PARAM_REPORT_CONTENT = "content";
+const std::string EVENT_PARAM_RETURN_SUCCESS = "success";
+const std::string EVENT_PARAM_RETURN_FAILED = "failed";
+
+enum V1MethodID {
+    METHOD_ENCRYPT = 1,
+    METHOD_DECRYPT,
+};
+
+enum MethodReport {
+    METHOD_COMMAND_EVENT_REPORT = 1
+};
+
+enum MethodCommandEventReportParamIndex {
+    PARAM_REPORT_USERID = 0,
+    PARAM_REPORT_ROLE,
+    PARAM_REPORT_TIME,
+    PARAM_REPORT_STATUS,
+    PARAM_REPORT_COMMAND,
+    PARAM_REPORT_CONTENT,
+};
+
+enum MethodAuthResult {
+    GET_PUBKEY_SUCCESSED = 0,
+    GET_PUBKEY_FAILED,
+    GET_PRIVKEY_FAILED,
+    MISMATCH_PUBKEY_PRIVKEY,
+    GET_PRIVATE_SUCCESSED
+};
+ 
+enum MethodAuthVerify {
+    GET_PUBKEY = 0,
+    GET_SIGNATURE
+};
+ 
+enum MethodVersion {
+    METHOD_CRYPTO_KEY = 1,
+    METHOD_REPORT = 2,
+    METHOD_AUTHVERIFY = 3,
+    METHOD_VERSION_MAX = 9,
+};
+
+#endif // HDC_CREDENTIAL_MESSAGE_H

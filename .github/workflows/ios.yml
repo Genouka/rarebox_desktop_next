@@ -1,0 +1,36 @@
+name: iOS (unsigned)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Build unsigned IPA
+        run: ./script/package_ios.sh release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rarebox-desktop-ios-unsigned
+          path: dist/*.ipa
+          if-no-files-found: error

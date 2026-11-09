@@ -1,0 +1,35 @@
+name: DCO
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  sign-off:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check every commit has Signed-off-by
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          fail=0
+          while IFS= read -r sha; do
+            [ -z "$sha" ] && continue
+            if ! git log -1 --format=%B "$sha" | grep -qE '^Signed-off-by: .+ <.+>$'; then
+              echo "::error::Commit $sha is missing a 'Signed-off-by:' line."
+              fail=1
+            fi
+          done < <(git rev-list "$base..$head")
+          if [ "$fail" -ne 0 ]; then
+            echo "请用 'git commit -s' 重新提交，并阅读 CONTRIBUTING.md / CLA.md。"
+            exit 1
+          fi
+          echo "All commits are signed off."

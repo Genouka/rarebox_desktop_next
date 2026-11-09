@@ -1,0 +1,2 @@
+# 打包脚本在 macOS 上执行，强制 LF，避免 CRLF 破坏 shebang。
+*.sh text eol=lf

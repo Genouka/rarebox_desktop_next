@@ -1,0 +1,38 @@
+name: Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows
+
+      - name: Install NASM
+        run: choco install nasm -y --no-progress
+
+      - name: Build
+        run: cargo build --release --bin rarebox-desktop
+
+      - name: Package
+        shell: pwsh
+        run: ./script/package_windows.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rarebox-desktop-windows
+          path: dist/*.zip
+          if-no-files-found: error

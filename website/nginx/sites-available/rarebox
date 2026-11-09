@@ -1,0 +1,177 @@
+# RareBox Desktop 更新服务 nginx 配置
+#   rareboxnextapi.qiumingsanyu.top  API + 管理后台（入口 index.php 位于站点根目录）
+#
+# 官网（rare.genouka.top）由独立仓库 rareplan_website 部署到 GitHub Pages，
+# 不在本配置内。
+#
+# 依赖：nginx（Debian 12 的 1.22 已够用）、PHP 8.2-FPM、acme.sh 泛域名证书。
+# 本文件由 /etc/nginx/sites-enabled/ 引入，处于 http 上下文，因此限流区在此声明。
+#
+# 部署：
+#   sudo cp website/nginx/sites-available/rarebox /etc/nginx/sites-available/
+#   sudo ln -s /etc/nginx/sites-available/rarebox /etc/nginx/sites-enabled/
+#   sudo nginx -t && sudo systemctl reload nginx
+
+# ===== 限流：按来源 IP =====
+# API：30 r/s，允许 60 个突发；管理后台登录：只统计 POST，10 r/min。
+map $request_method $rarebox_login_key {
+	default "";
+	POST    $binary_remote_addr;
+}
+
+limit_req_zone  $binary_remote_addr  zone=rarebox_api:10m   rate=30r/s;
+limit_req_zone  $rarebox_login_key   zone=rarebox_login:10m rate=10r/m;
+limit_conn_zone $binary_remote_addr  zone=rarebox_conn:10m;
+
+# ===== API + 管理后台 =====
+server {
+	listen 443 ssl;
+	listen [::]:443 ssl;
+	ssl_certificate /root/.acme.sh/*.qiumingsanyu.top_ecc/fullchain.cer;
+	ssl_certificate_key /root/.acme.sh/*.qiumingsanyu.top_ecc/*.qiumingsanyu.top.key;
+	server_name rareboxnextapi.qiumingsanyu.top;
+
+	ssl_protocols TLSv1.2 TLSv1.3;
+	ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+	ssl_prefer_server_ciphers off;
+	ssl_session_cache shared:rarebox_tls:10m;
+	ssl_session_timeout 1d;
+	ssl_session_tickets off;
+
+	server_tokens off;
+	root /var/www/$host;
+	index index.php index.html;
+	charset utf-8;
+	autoindex off;
+
+	# 只接受读取/表单/预检请求，杜绝 TRACE、PUT、DELETE 等
+	if ($request_method !~ ^(GET|HEAD|POST|OPTIONS)$) {
+		return 405;
+	}
+
+	client_max_body_size 2m;
+	client_body_timeout 15s;
+	client_header_timeout 10s;
+	send_timeout 30s;
+
+	limit_conn rarebox_conn 30;
+	limit_req zone=rarebox_api burst=60 nodelay;
+	limit_req_status 429;
+
+	add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+	add_header X-Content-Type-Options "nosniff" always;
+	add_header X-Frame-Options "DENY" always;
+	add_header Referrer-Policy "no-referrer" always;
+	add_header X-Robots-Tag "noindex, nofollow" always;
+	add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+	add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'" always;
+
+	# ===== 禁止访问的目录 =====
+	location ^~ /data/ {
+		return 404;
+	}
+	location = /data {
+		return 404;
+	}
+	# PHP 依赖目录：只允许 index.php 在服务端 require，禁止 HTTP 访问
+	location ^~ /lib/ {
+		return 404;
+	}
+	location = /lib {
+		return 404;
+	}
+	# 依赖/构建残留目录（存在即拒绝）
+	location ^~ /vendor/ {
+		return 404;
+	}
+	location ^~ /node_modules/ {
+		return 404;
+	}
+	location ^~ /logs/ {
+		return 404;
+	}
+	location ^~ /backup/ {
+		return 404;
+	}
+	# 版本库目录
+	location ^~ /.git/ {
+		return 404;
+	}
+	# 点文件（.env、.ht* 等），保留 ACME 校验路径
+	location ~ /\.(?!well-known/) {
+		deny all;
+	}
+
+	# ===== 禁止访问的文件 =====
+	# 数据库、配置、依赖清单
+	location = /config.php {
+		return 404;
+	}
+	# 本地开发用：PHP 内置服务器路由脚本与本地配置覆盖
+	location ~* ^/(router\.php|config\.local\.php)$ {
+		return 404;
+	}
+	location ~* ^/(composer\.(json|lock)|package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|Dockerfile|docker-compose\.ya?ml|Makefile)$ {
+		return 404;
+	}
+	# 备份、源码、数据库、日志、脚本、文档等
+	location ~* \.(bak|backup|old|orig|save|swp|swo|tmp|temp|log|ini|env|dist|sql|sqlite3?|db|md|markdown|sh|bat|ps1|ya?ml|toml|lock|phtml|phar|php[0-9])$ {
+		return 404;
+	}
+	# admin/ 下的 PHP 视图只允许由 index.php 路由渲染，禁止直连（否则可绕过鉴权）
+	location ~* ^/admin/.*\.php$ {
+		return 404;
+	}
+
+	# 登录入口单独限速，防暴力破解
+	location = /admin/login {
+		limit_req zone=rarebox_login burst=5 nodelay;
+		try_files $uri /index.php?$query_string;
+	}
+	location = /admin {
+		try_files $uri /index.php?$query_string;
+	}
+	location /admin/ {
+		try_files $uri /index.php?$query_string;
+	}
+
+	# 后台静态资源
+	location ~* \.(css|js|png|svg|ico|woff2?)$ {
+		expires 1h;
+	}
+
+	location / {
+		# 不用 $uri/：目录不做索引，未命中的路径统一交给前端控制器
+		try_files $uri /index.php?$query_string;
+	}
+
+	location ~* \.php$ {
+		# 动态响应（含带 CSRF token 的 admin 页面）不缓存。
+		# location 内出现 add_header 后 server 级 add_header 不再继承，这里必须重复一遍。
+		add_header Cache-Control "no-store" always;
+		add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+		add_header X-Content-Type-Options "nosniff" always;
+		add_header X-Frame-Options "DENY" always;
+		add_header Referrer-Policy "no-referrer" always;
+		add_header X-Robots-Tag "noindex, nofollow" always;
+		add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+		add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'" always;
+
+		fastcgi_pass    unix:/run/php/php8.2-fpm.sock;
+		fastcgi_index   index.php;
+		include         fastcgi_params;
+		fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+		# httpoxy（CVE-2016-5385）
+		fastcgi_param   HTTP_PROXY "";
+		fastcgi_read_timeout 30s;
+		fastcgi_hide_header X-Powered-By;
+	}
+}
+
+# ===== HTTP 全部跳转 HTTPS =====
+server {
+	listen 80;
+	listen [::]:80;
+	server_name rareboxnextapi.qiumingsanyu.top;
+	rewrite ^(.*)$ https://$host$1 permanent;
+}

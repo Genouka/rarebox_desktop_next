@@ -1,0 +1,90 @@
+name: RareBoxDesktop
+options:
+  bundleIdPrefix: top.qiumingsanyu
+  deploymentTarget:
+    iOS: "15.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  RareBoxDesktop:
+    type: application
+    platform: iOS
+    sources:
+      - path: main.m
+        type: file
+        buildPhase: sources
+      - path: gpui_ios.h
+        type: file
+        buildPhase: headers
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: top.qiumingsanyu.rarebox.ios
+        PRODUCT_NAME: RareBoxDesktop
+        INFOPLIST_FILE: Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+        IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+        DEVELOPMENT_TEAM: ""
+        SWIFT_VERSION: "5.0"
+        CLANG_ENABLE_MODULES: YES
+        CLANG_ENABLE_OBJC_ARC: YES
+        ENABLE_BITCODE: NO
+        ENABLE_DEBUG_DYLIB: NO
+        DEAD_CODE_STRIPPING: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        VALID_ARCHS: "arm64"
+        ARCHS: "arm64"
+        ONLY_ACTIVE_ARCH: YES
+        HEADER_SEARCH_PATHS:
+          - "$(PROJECT_DIR)"
+        GCC_PREPROCESSOR_DEFINITIONS:
+          - "USE_GPUI_RUST=1"
+          - "$(inherited)"
+        OTHER_LDFLAGS:
+          - "-force_load"
+          - "$(RAREBOX_STATIC_LIB)"
+          - "-lc++"
+          - "-framework UIKit"
+          - "-framework Metal"
+          - "-framework MetalKit"
+          - "-framework QuartzCore"
+          - "-framework CoreGraphics"
+          - "-framework CoreText"
+          - "-framework CoreFoundation"
+          - "-framework Foundation"
+          - "-framework LocalAuthentication"
+          - "-framework SystemConfiguration"
+          - "-framework AudioToolbox"
+          - "-framework CoreMedia"
+          - "-framework AVFoundation"
+          - "-ObjC"
+        "RAREBOX_STATIC_LIB[sdk=iphoneos*]": "$(PROJECT_DIR)/../target/aarch64-apple-ios/release/librarebox_desktop.a"
+      configs:
+        Debug:
+          "RAREBOX_STATIC_LIB[sdk=iphoneos*]": "$(PROJECT_DIR)/../target/aarch64-apple-ios/debug/librarebox_desktop.a"
+          GCC_OPTIMIZATION_LEVEL: "0"
+          DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
+
+    preBuildScripts:
+      - name: "Build Rust static library"
+        basedOnDependencyAnalysis: false
+        shell: /bin/bash
+        script: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+          if [ -f "$HOME/.cargo/env" ]; then source "$HOME/.cargo/env"; fi
+          cd "${PROJECT_DIR}/.."
+          CARGO_FLAGS=""
+          if [ "${CONFIGURATION}" = "Release" ]; then
+            CARGO_FLAGS="--release"
+          fi
+          rustup target add aarch64-apple-ios >/dev/null 2>&1 || true
+          cargo build --lib --target aarch64-apple-ios ${CARGO_FLAGS}
