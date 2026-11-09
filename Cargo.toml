@@ -68,7 +68,7 @@ log = "0.4"
 
 # iOS：gpui-mobile 提供 GPUI 的 UIKit + wgpu/Metal 实现。
 [target.'cfg(target_os = "ios")'.dependencies]
-gpui-mobile = { path = "vendor/gpui-mobile", default-features = false }
+gpui-mobile = { path = "vendor/gpui-mobile", default-features = false, features = ["video_player", "camera"] }
 
 # gpui-mobile 上游：https://github.com/itsbalamurali/gpui-mobile
 # 仓库内副本固定于提交 5fd54f4554263ae06753e90472c7f2e2ff5d7495。
