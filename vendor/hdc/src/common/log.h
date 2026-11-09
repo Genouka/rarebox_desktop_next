@@ -45,7 +45,8 @@ enum HdcLogLevel {
 #ifdef IS_RELEASE_VERSION
 #define HDC_LOG_FUNCTION_NAME __FUNCTION__
 #else
-#define HDC_LOG_FUNCTION_NAME __FILE_NAME__
+// `__FILE_NAME__` 是 GCC 12+ 扩展，Apple Clang / 部分 GCC 未提供。
+#define HDC_LOG_FUNCTION_NAME __FILE__
 #endif
 
 #define WRITE_LOG(level, fmt, ...) do { \
