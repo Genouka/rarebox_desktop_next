@@ -27,7 +27,7 @@ jobs:
           sudo apt-get install -y \
             build-essential pkg-config cmake nasm perl clang libclang-dev \
             libssl-dev libuv1-dev libusb-1.0-0-dev liblz4-dev \
-            libxkbcommon-dev libwayland-dev libx11-dev libx11-xcb-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev \
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxcb-util-dev libfontconfig1-dev libfreetype6-dev \
             libglib2.0-dev libdbus-1-dev libvulkan-dev \
