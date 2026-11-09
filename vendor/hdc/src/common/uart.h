@@ -82,7 +82,7 @@ struct UartHead {
     };
     UartHead(uint32_t sessionIdIn = 0, uint8_t optionIn = 0, uint32_t dataSizeIn = 0,
              uint32_t packageIndexIn = 0)
-        : flag {PACKET_FLAG[0], PACKET_FLAG[1]},
+        : flag {static_cast<uint8_t>(PACKET_FLAG[0]), static_cast<uint8_t>(PACKET_FLAG[1])},
           option(optionIn),
           sessionId(sessionIdIn),
           dataSize(dataSizeIn),

@@ -223,6 +223,7 @@ build_unix() { # <platform>
     compile_hdc "$cxx" "$out/obj" \
         -DHDC_HOST -DHARMONY_PROJECT -D"$host_macro" -DUSE_CONFIG_UV_THREADS -DSIZE_THREAD_POOL=128 \
         -DOPENSSL_SUPPRESS_DEPRECATED -DHDC_SUPPORT_ENCRYPT_TCP -DMEMORY_POOL_ENABLE -DHDC_SUPPORT_UART \
+        -Wno-c++11-narrowing -Wno-narrowing \
         -- -I"$SRC/src/common" -I"$SRC/src/host" -I"$BUILD/gen" \
         -I"$SRC/third_party/bounds_checking_function/include" \
         -I"$SRC/third_party/libusb" -I"$SRC/third_party/libusb/libusb" \
