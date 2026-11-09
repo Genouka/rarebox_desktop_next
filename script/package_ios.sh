@@ -20,12 +20,15 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 rustup target add aarch64-apple-ios >/dev/null 2>&1 || true
+export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-15.0}"
 
+# 只构建 staticlib：默认的 cdylib 会在 `cargo build` 阶段尝试链接 iOS 动态库，
+# 而 Xcode 最终会负责链接 app，这里不需要也不应该提前链接。
 if [[ "$MODE" == "debug" ]]; then
-    cargo build --lib --target aarch64-apple-ios
+    cargo rustc --lib --target aarch64-apple-ios -- --crate-type staticlib
     XCODE_CONFIG="Debug"
 else
-    cargo build --lib --release --target aarch64-apple-ios
+    cargo rustc --lib --target aarch64-apple-ios --release -- --crate-type staticlib
     XCODE_CONFIG="Release"
 fi
 

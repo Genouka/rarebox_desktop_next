@@ -87,4 +87,5 @@ targets:
             CARGO_FLAGS="--release"
           fi
           rustup target add aarch64-apple-ios >/dev/null 2>&1 || true
-          cargo build --lib --target aarch64-apple-ios ${CARGO_FLAGS}
+          export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-15.0}"
+          cargo rustc --lib --target aarch64-apple-ios ${CARGO_FLAGS} -- --crate-type staticlib

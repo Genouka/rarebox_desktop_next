@@ -207,7 +207,7 @@ build_unix() { # <platform>
     cflags="$(pkg-config --cflags $pkgs libusb-1.0)"
     # 使用发行版的动态库，避免 OpenSSL 3 的静态依赖（jitterentropy/zstd/xxhash）
     # 把链接命令拖成一长串；发行包只需系统里有对应运行库。
-    libs="$(pkg-config --libs openssl libuv libusb-1.0) -llz4"
+    libs="$(pkg-config --libs openssl libuv libusb-1.0 liblz4)"
     local out="$BUILD/$platform" sec="$BUILD/$platform/securec"
     # 交叉/自带 sysroot 时，multiarch 头文件目录（opensslconf.h）不在默认搜索路径。
     local triple multiarch=""
