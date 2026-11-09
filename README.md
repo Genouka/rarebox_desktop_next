@@ -116,6 +116,37 @@ Android 端说明：
 - 手机/平板上侧栏改为抽屉（左上角菜单按钮），标题栏压缩为一行，并自动避让状态栏与导航栏。
 - 应用内部存储路径为 `files/config.json`，截图、录屏与导出文件位于 `Android/data/com.rarebox.desktop/files/`。
 
+### Windows / Linux
+
+```powershell
+# Windows
+pwsh ./script/package_windows.ps1
+```
+
+```bash
+# Linux（需 X11/Wayland、fontconfig、xkbcommon 开发包，以及 OpenSSL/libuv/libusb/lz4）
+./script/package_linux.sh
+```
+
+产物分别是 `dist/RareBox-Desktop-<版本>-windows-x64.zip` 与
+`dist/RareBox-Desktop-<版本>-linux-x64.tar.gz`。`.github/workflows/windows.yml`
+和 `linux.yml` 在对应 runner 上构建并上传产物。
+
+### iOS（未签名）
+
+iOS 版由 `gpui-mobile`（UIKit + wgpu/Metal）提供平台层，需要 macOS、Xcode 15+
+与 [XcodeGen](https://github.com/yonaskolb/XcodeGen)：
+
+```bash
+brew install xcodegen
+rustup target add aarch64-apple-ios
+./script/package_ios.sh release
+```
+
+产物为 `dist/RareBox-Desktop-<版本>-ios-unsigned.ipa`。该包未签名，只能用于
+构建验证或自行签名后侧载；`.github/workflows/ios.yml` 在 macOS runner 上构建
+并上传该未签名包。
+
 
 ## 代码结构
 
