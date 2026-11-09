@@ -75,7 +75,7 @@ impl RareBox {
             true,
             cx.listener(|app, _, _, cx| app.pick_and_push(cx)),
         );
-        let mobile = cfg!(target_os = "android");
+        let mobile = cfg!(any(target_os = "android", target_os = "ios"));
 
         let toolbar = Card::new()
             .outlined()
@@ -191,7 +191,7 @@ impl RareBox {
                         .text_color(colors.on_surface_variant)
                         .child(div().w(px(24.)))
                         .child(div().flex_1().child("名称"))
-                        .when(!cfg!(target_os = "android"), |el| {
+                        .when(!cfg!(any(target_os = "android", target_os = "ios")), |el| {
                             el.child(div().w(px(86.)).text_right().child("大小"))
                                 .child(div().w(px(120.)).text_right().child("修改时间"))
                         })
@@ -295,7 +295,7 @@ fn file_row(
     weak: gpui::WeakEntity<RareBox>,
 ) -> impl IntoElement {
     let colors = *cx.theme().colors();
-    let mobile = cfg!(target_os = "android");
+    let mobile = cfg!(any(target_os = "android", target_os = "ios"));
     let is_last = index + 1 == total;
     let name = entry.name.clone();
     let is_dir = entry.is_dir;

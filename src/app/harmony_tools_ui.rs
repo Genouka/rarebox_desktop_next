@@ -53,7 +53,7 @@ impl RareBox {
         let toolbar = Card::new()
             .outlined()
             .p(px(16.))
-            .child(if cfg!(target_os = "android") {
+            .child(if cfg!(any(target_os = "android", target_os = "ios")) {
                 div()
                     .flex()
                     .flex_col()
@@ -206,7 +206,7 @@ impl RareBox {
                         .text_color(colors.on_surface_variant)
                         .child(div().w(px(24.)))
                         .child(div().flex_1().child("名称"))
-                        .when(!cfg!(target_os = "android"), |el| {
+                        .when(!cfg!(any(target_os = "android", target_os = "ios")), |el| {
                             el.child(div().w(px(86.)).text_right().child("大小"))
                                 .child(div().w(px(120.)).text_right().child("修改时间"))
                         })
@@ -745,7 +745,7 @@ fn harmony_file_row(
     weak: WeakEntity<RareBox>,
 ) -> impl IntoElement {
     let colors = *cx.theme().colors();
-    let mobile = cfg!(target_os = "android");
+    let mobile = cfg!(any(target_os = "android", target_os = "ios"));
     let name = entry.name.clone();
     let is_dir = entry.is_dir;
 

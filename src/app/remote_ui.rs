@@ -53,7 +53,7 @@ impl RareBox {
         }
 
         let colors = *cx.theme().colors();
-        let mobile = cfg!(target_os = "android");
+        let mobile = cfg!(any(target_os = "android", target_os = "ios"));
         let phase = self.remote_phase;
         let running = phase == RemotePhase::Running;
         let frame = self.remote_frame.clone();

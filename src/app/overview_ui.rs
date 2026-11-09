@@ -36,7 +36,7 @@ impl RareBox {
                     cx,
                     weak,
                     "还没有连接手表",
-                    if cfg!(target_os = "android") {
+                    if cfg!(any(target_os = "android", target_os = "ios")) {
                         "通过无线 ADB 连接同一网络中的手表，或用 USB OTG 线直连（系统弹窗允许 USB 权限）。"
                     } else {
                         "使用 USB 数据线连接 Wear OS 手表并开启 USB 调试，或前往设置使用无线调试。"
@@ -65,7 +65,7 @@ fn overview_content(
 ) -> Div {
     let colors = *cx.theme().colors();
     let typography = *cx.theme().typography();
-    let mobile = cfg!(target_os = "android");
+    let mobile = cfg!(any(target_os = "android", target_os = "ios"));
 
     let title = snapshot.title();
     let wearable = snapshot.is_wearable();

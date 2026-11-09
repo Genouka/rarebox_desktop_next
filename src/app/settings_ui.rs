@@ -17,7 +17,7 @@ use material3_gpui::theme::ActiveTheme;
 impl RareBox {
     pub(crate) fn render_settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let colors = *cx.theme().colors();
-        let mobile = cfg!(target_os = "android");
+        let mobile = cfg!(any(target_os = "android", target_os = "ios"));
         let adb_ready = self.adb_path.is_some();
         let adb_path = self
             .adb_path
@@ -208,7 +208,7 @@ impl RareBox {
             .child(ui::section_header(
                 cx,
                 "HDC（HarmonyOS）",
-                Some(if cfg!(target_os = "android") {
+                Some(if cfg!(any(target_os = "android", target_os = "ios")) {
                     "Android 端已内置 hdc（libhdc.so）；留空时优先使用内置版本"
                 } else {
                     "各平台已内置 hdc；留空时优先使用内置版本，也可指定外部路径"

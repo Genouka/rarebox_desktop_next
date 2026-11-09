@@ -114,7 +114,7 @@ impl RareBox {
             true,
             cx.listener(|app, _, _, cx| app.clear_logcat(cx)),
         );
-        let mobile = cfg!(target_os = "android");
+        let mobile = cfg!(any(target_os = "android", target_os = "ios"));
 
         let toolbar = Card::new()
             .outlined()

@@ -22,7 +22,7 @@ impl RareBox {
     /// 连接页的 HarmonyOS（hdc）部分：检测状态、设备、网络连接与端口转发。
     pub(crate) fn render_connect_harmony(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let colors = *cx.theme().colors();
-        let mobile = cfg!(target_os = "android");
+        let mobile = cfg!(any(target_os = "android", target_os = "ios"));
         let ready = self.harmony.path.is_some();
         let version = self
             .harmony
@@ -77,7 +77,7 @@ impl RareBox {
             .child(ui::section_header(
                 cx,
                 "HarmonyOS（hdc）",
-                Some(if cfg!(target_os = "android") {
+                Some(if cfg!(any(target_os = "android", target_os = "ios")) {
                     "使用 hdc 直连鸿蒙设备，可在设置中指定 hdc 路径"
                 } else {
                     "不依赖 adb：Windows 使用内置 hdc，也可指定外部路径"
@@ -196,7 +196,7 @@ impl RareBox {
                 cx,
                 "devices",
                 "未检测到 hdc",
-                if cfg!(target_os = "android") {
+                if cfg!(any(target_os = "android", target_os = "ios")) {
                     "鸿蒙调试使用 HarmonyOS Device Connector（hdc）。Android 端已内置 hdc（libhdc.so），可通过 USB OTG 直连鸿蒙设备（系统弹窗允许 USB 权限），也可用 hdc tconn 无线连接；还能在设置中指定外部 hdc。"
                 } else {
                     "鸿蒙调试使用 HarmonyOS Device Connector（hdc）。各平台都已内置 hdc；解包或加载失败时会回退到 DevEco Studio / OpenHarmony SDK 的 toolchains 目录，也可在设置中指定外部路径。"
@@ -450,7 +450,7 @@ impl RareBox {
     pub(crate) fn render_screen_harmony(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let colors = *cx.theme().colors();
         let weak = cx.entity().downgrade();
-        let mobile = cfg!(target_os = "android");
+        let mobile = cfg!(any(target_os = "android", target_os = "ios"));
         let selected = self.harmony.selected.clone();
         let snapshot = self.harmony.snapshot.clone();
         let screenshot = self.harmony.screenshot.clone();

@@ -108,7 +108,7 @@ impl RareBox {
         let toolbar = Card::new()
             .outlined()
             .p(px(16.))
-            .child(if cfg!(target_os = "android") {
+            .child(if cfg!(any(target_os = "android", target_os = "ios")) {
                 div()
                     .flex()
                     .flex_col()
@@ -809,7 +809,7 @@ fn package_row(
                 ),
         )
         .child(launch)
-        .when(!cfg!(target_os = "android"), |el| el.child(stop))
+        .when(!cfg!(any(target_os = "android", target_os = "ios")), |el| el.child(stop))
         .child(more)
 }
 

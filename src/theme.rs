@@ -57,7 +57,7 @@ fn ui_font_family() -> SharedString {
         // "Noto Sans" 常规字体文件（只有各语种与 CJK 变体）。
         font_family("Roboto")
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android")))]
     {
         font_family("Noto Sans")
     }

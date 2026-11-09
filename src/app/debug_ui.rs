@@ -164,7 +164,7 @@ impl RareBox {
             cx.listener(|app, _, _, cx| app.load_app_ops(cx)),
         );
 
-        let package_row = if cfg!(target_os = "android") {
+        let package_row = if cfg!(any(target_os = "android", target_os = "ios")) {
             div()
                 .flex()
                 .flex_col()
@@ -346,7 +346,7 @@ impl RareBox {
                     ),
             )
             .child(
-                if cfg!(target_os = "android") {
+                if cfg!(any(target_os = "android", target_os = "ios")) {
                     div()
                         .flex()
                         .flex_col()

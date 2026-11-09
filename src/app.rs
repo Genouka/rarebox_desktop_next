@@ -429,7 +429,7 @@ impl RareBox {
                 TextField::new("settings-adb-path", "ADB 可执行文件路径")
                     .value(adb_input.clone())
                     .leading_icon(IconName::new("adb"))
-                    .helper(if cfg!(target_os = "android") {
+                    .helper(if cfg!(any(target_os = "android", target_os = "ios")) {
                         "留空可自动在 Termux、系统路径与 APK 自带目录中查找"
                     } else {
                         "留空可自动在 PATH、Android SDK 与项目目录中查找"
@@ -630,7 +630,7 @@ impl RareBox {
                 TextField::new("settings-hdc-path", "hdc 可执行文件路径")
                     .value(hdc_input.clone())
                     .leading_icon(IconName::new("devices"))
-                    .helper(if cfg!(target_os = "android") {
+                    .helper(if cfg!(any(target_os = "android", target_os = "ios")) {
                         "已内置 hdc（libhdc.so）；留空时优先使用内置版本"
                     } else {
                         "留空时优先使用内置 hdc，再查找 DevEco Studio 与 OpenHarmony SDK"

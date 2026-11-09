@@ -16,7 +16,9 @@ pub const MONO_FONT: &str = "Cascadia Mono";
 pub const MONO_FONT: &str = "Menlo";
 #[cfg(target_os = "android")]
 pub const MONO_FONT: &str = "Droid Sans Mono";
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
+#[cfg(target_os = "ios")]
+pub const MONO_FONT: &str = "Menlo";
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android")))]
 pub const MONO_FONT: &str = "DejaVu Sans Mono";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

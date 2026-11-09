@@ -18,7 +18,7 @@ impl RareBox {
             return self.render_connect_harmony(cx);
         }
         let colors = *cx.theme().colors();
-        let mobile = cfg!(target_os = "android");
+        let mobile = cfg!(any(target_os = "android", target_os = "ios"));
         let adb_ready = self.adb_path.is_some();
         let adb_error = self.adb_error.clone();
         let devices = self.devices.clone();
@@ -79,7 +79,7 @@ impl RareBox {
                                 .text_size(px(11.5))
                                 .line_height(px(17.))
                                 .text_color(colors.on_surface_variant)
-                                .child(if cfg!(target_os = "android") {
+                                .child(if cfg!(any(target_os = "android", target_os = "ios")) {
                                     "还没有任何设备。Android 端请使用下方「无线调试」连接手表。"
                                 } else {
                                     "还没有任何设备。先按上方步骤完成 USB 连接，或在下方用无线调试连接。"
@@ -454,7 +454,7 @@ fn guide_card(
                     0,
                     adb_ready,
                     "准备 ADB",
-                    if cfg!(target_os = "android") {
+                    if cfg!(any(target_os = "android", target_os = "ios")) {
                         "应用已内置 adb，无需另外安装；也可以在「设置」中指定外部 adb 路径。"
                     } else {
                         "RareBox 会自动查找 platform-tools；找不到时可在「设置」指定 adb.exe。"
@@ -463,12 +463,12 @@ fn guide_card(
                 .child(step(
                     1,
                     false,
-                    if cfg!(target_os = "android") {
+                    if cfg!(any(target_os = "android", target_os = "ios")) {
                         "在手表上开启无线调试"
                     } else {
                         "用 USB 数据线连接手表"
                     },
-                    if cfg!(target_os = "android") {
+                    if cfg!(any(target_os = "android", target_os = "ios")) {
                         "在手表「设置 → 系统 → 开发者选项 → 无线调试」中开启配对，然后使用下方的无线调试卡片连接。"
                     } else {
                         "手表上进入「设置 → 系统 → 开发者选项」，打开「USB 调试」，并在弹窗中点「允许」。"
@@ -478,7 +478,7 @@ fn guide_card(
                     2,
                     false,
                     "确认设备出现在下方列表",
-                    if cfg!(target_os = "android") {
+                    if cfg!(any(target_os = "android", target_os = "ios")) {
                         "配对并连接后设备会出现在下方列表；若显示「离线」，请检查地址、端口与网络。"
                     } else {
                         "首次授权后设备状态会变成「已连接」；如果显示「未授权」，请在手表上重新确认授权。"

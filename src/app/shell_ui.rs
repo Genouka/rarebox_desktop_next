@@ -151,7 +151,7 @@ impl RareBox {
             .flex()
             .flex_col()
             .id("sidebar-scroll")
-            .when(cfg!(target_os = "android"), |el| {
+            .when(cfg!(any(target_os = "android", target_os = "ios")), |el| {
                 el.overflow_y_scroll().restrict_scroll_to_axis()
             })
             .bg(colors.surface_container_low)
@@ -374,7 +374,7 @@ impl RareBox {
     pub(crate) fn render_topbar(&mut self, cx: &mut Context<Self>) -> Div {
         let colors = *cx.theme().colors();
         let typography = *cx.theme().typography();
-        let mobile = cfg!(target_os = "android");
+        let mobile = cfg!(any(target_os = "android", target_os = "ios"));
         let page = self.page;
         let harmony_mode = self.is_harmony();
         let current = self.current_device().cloned();
@@ -924,7 +924,7 @@ impl RareBox {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let colors = *cx.theme().colors();
-        let mobile = cfg!(target_os = "android");
+        let mobile = cfg!(any(target_os = "android", target_os = "ios"));
         let viewport = window.viewport_size();
         div().when_some(self.legal.clone(), |el, modal| {
             let body = match modal.tab {
@@ -1523,7 +1523,7 @@ impl Render for RareBox {
         let sidebar_open = self.sidebar_open;
         self.drop_remote_frames(window, cx);
         let overlay = material3_gpui::overlay::host(window, cx);
-        let mobile = cfg!(target_os = "android");
+        let mobile = cfg!(any(target_os = "android", target_os = "ios"));
         let titlebar: AnyElement = if mobile {
             self.render_mobile_appbar(cx).into_any_element()
         } else {

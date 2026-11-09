@@ -20,7 +20,7 @@ impl RareBox {
             return self.render_screen_harmony(cx);
         }
         let weak = cx.entity().downgrade();
-        let mobile = cfg!(target_os = "android");
+        let mobile = cfg!(any(target_os = "android", target_os = "ios"));
         let Some(snapshot) = self.snapshot.clone() else {
             return page_scroll(
                 Page::Screen,
