@@ -66,4 +66,4 @@ rm -f "$OUT"
     cd "$DIST/ios"
     zip -qry "../../$OUT" Payload
 )
-echo "已生成 $OUT（未签名）"
+echo "已生成 ${OUT}（未签名）"
