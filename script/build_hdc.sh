@@ -213,7 +213,7 @@ build_unix() { # <platform>
     local triple multiarch=""
     triple="$("$cc" -dumpmachine 2>/dev/null || true)"
     if [[ -n "$triple" && -d "${PKG_CONFIG_SYSROOT_DIR:-}/usr/include/$triple" ]]; then
-        multiarch="-I${PKG_CONFIG_SYSROOT_DIR}/usr/include/$triple"
+        multiarch="-I${PKG_CONFIG_SYSROOT_DIR:-}/usr/include/$triple"
     fi
     mkdir -p "$out" "$sec"
     generate_hash
