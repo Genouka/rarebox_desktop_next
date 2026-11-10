@@ -351,9 +351,7 @@ pub struct InputMethod {
 }
 
 /// AppOps 的执行模式；取值与 Android `appops` 命令一致。
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AppOpMode {
     Default,
@@ -395,9 +393,7 @@ impl AppOpMode {
 
     fn parse(raw: &str) -> Option<Self> {
         let raw = raw.trim();
-        AppOpMode::ALL
-            .into_iter()
-            .find(|mode| mode.as_arg() == raw)
+        AppOpMode::ALL.into_iter().find(|mode| mode.as_arg() == raw)
     }
 }
 

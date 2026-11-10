@@ -98,7 +98,10 @@ pub unsafe extern "C" fn rarebox_engine_new_with_config(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rarebox_engine_free(handle: *mut EngineHandle) {
     if !handle.is_null() {
-        drop(unsafe { Box::from_raw(handle) });
+        let handle = unsafe { Box::from_raw(handle) };
+        // 显式停掉核心线程；否则 JNI / C ABI 宿主反复创建销毁引擎会泄漏空闲线程。
+        handle.engine.shutdown_and_wait();
+        drop(handle);
     }
 }
 

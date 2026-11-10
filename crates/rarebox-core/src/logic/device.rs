@@ -148,8 +148,7 @@ impl Core {
             self.stop_remote(cx);
             if self.state.harmony.path.is_none() {
                 self.refresh_hdc(cx);
-            } else if self.state.harmony.selected.is_some()
-                && self.state.harmony.snapshot.is_none()
+            } else if self.state.harmony.selected.is_some() && self.state.harmony.snapshot.is_none()
             {
                 self.load_hdc_snapshot(cx);
                 self.load_hdc_forwards(cx);

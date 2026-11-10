@@ -253,9 +253,7 @@ impl RareBox {
             .child(div().mt(px(12.)).child(mode_chips));
 
         if imported {
-            let file_row = |label: &'static str,
-                            path: &Option<PathBuf>,
-                            which: ImportFile| {
+            let file_row = |label: &'static str, path: &Option<PathBuf>, which: ImportFile| {
                 let name = path
                     .as_ref()
                     .map(|path| {

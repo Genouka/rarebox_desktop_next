@@ -1076,9 +1076,7 @@ fn first_nonempty_line(text: &str) -> String {
 }
 
 /// 点击类 UI 操作。
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HdcTap {
     Click,
@@ -1105,9 +1103,7 @@ impl HdcTap {
 }
 
 /// `uitest uiInput dircFling` 的方向编码。
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HdcSwipeDirection {
     Left,
@@ -1144,9 +1140,7 @@ impl HdcSwipeDirection {
 }
 
 /// 常用硬件按键。
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HdcKey {
     Back,
@@ -2228,7 +2222,6 @@ mod tests {
         assert_eq!(packages[2].name, "com.ohos.no.label");
         assert!(packages[2].label.is_none());
     }
-
 
     #[test]
     fn skips_non_bundle_lines() {

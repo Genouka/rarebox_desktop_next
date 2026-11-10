@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>RareBox Web</title>
+    <link rel="icon" href="icons/android.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="boot" class="boot">
+      <div class="boot-mark"></div>
+      <p>正在启动 RareBox Web…</p>
+    </div>
+
+    <div id="app" class="app hidden">
+      <aside class="sidebar">
+        <div class="brand">
+          <img src="icons/android.svg" alt="" class="brand-icon" />
+          <div>
+            <strong>RareBox</strong>
+            <small>Web</small>
+          </div>
+        </div>
+        <nav id="nav" class="nav">
+          <button class="nav-item" data-view="connect">
+            <span class="icon" style="--icon: url('icons/cable.svg')"></span><span>连接</span>
+          </button>
+          <button class="nav-item" data-view="overview" data-needs-device>
+            <span class="icon" style="--icon: url('icons/dashboard.svg')"></span><span>概览</span>
+          </button>
+          <button class="nav-item" data-view="apps" data-needs-device>
+            <span class="icon" style="--icon: url('icons/apps.svg')"></span><span>应用</span>
+          </button>
+          <button class="nav-item" data-view="files" data-needs-device>
+            <span class="icon" style="--icon: url('icons/folder.svg')"></span><span>文件</span>
+          </button>
+          <button class="nav-item" data-view="terminal" data-needs-device>
+            <span class="icon" style="--icon: url('icons/terminal.svg')"></span><span>终端</span>
+          </button>
+          <button class="nav-item" data-view="logs" data-needs-device>
+            <span class="icon" style="--icon: url('icons/subject.svg')"></span><span>日志</span>
+          </button>
+          <button class="nav-item" data-view="screen" data-needs-device>
+            <span class="icon" style="--icon: url('icons/screenshot_monitor.svg')"></span><span>屏幕</span>
+          </button>
+        </nav>
+        <div class="sidebar-foot">
+          <button class="nav-item" data-view="about">
+            <span class="icon" style="--icon: url('icons/install_desktop.svg')"></span><span>客户端</span>
+          </button>
+          <p class="sidebar-note">仅支持 USB 连接<br />不支持无线调试</p>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="topbar-title">
+            <button id="menu-toggle" class="icon-button menu-toggle" title="菜单">
+              <span class="icon" style="--icon: url('icons/list.svg')"></span>
+            </button>
+            <h1 id="page-title">连接</h1>
+          </div>
+          <div class="topbar-actions">
+            <button id="device-pill" class="device-pill hidden" title="设备">
+              <span class="status-dot"></span>
+              <span id="device-pill-text"></span>
+            </button>
+            <button id="theme-toggle" class="icon-button" title="切换深色模式">
+              <span class="icon" id="theme-icon" style="--icon: url('icons/dark_mode.svg')"></span>
+            </button>
+          </div>
+        </header>
+
+        <div id="content" class="content">
+          <!-- 连接 -->
+          <section class="view" data-view="connect">
+            <div class="hero">
+              <div class="hero-copy">
+                <span class="eyebrow">浏览器版 · WebUSB</span>
+                <h2>在浏览器里直接调试 Android 设备</h2>
+                <p>
+                  通过 WebUSB 直连设备里的 adbd，不依赖本机 adb server。
+                  所有命令、文件与画面都来自真实设备。
+                </p>
+                <div class="hero-actions">
+                  <button id="connect-primary" class="button filled">
+                    <span class="icon" style="--icon: url('icons/usb.svg')"></span>
+                    选择 USB 设备
+                  </button>
+                  <button class="button outlined" data-wireless>
+                    <span class="icon" style="--icon: url('icons/wifi.svg')"></span>
+                    无线调试
+                  </button>
+                </div>
+              </div>
+              <img src="icons/devices.svg" alt="" class="hero-art" />
+            </div>
+
+            <div id="usb-warning" class="callout warning hidden"></div>
+
+            <div class="grid two">
+              <article class="card">
+                <div class="card-head">
+                  <div>
+                    <h3>USB 设备</h3>
+                    <p class="muted">已授权给本页面的设备会出现在下面。</p>
+                  </div>
+                  <button id="refresh-usb" class="icon-button" title="刷新">
+                    <span class="icon" style="--icon: url('icons/refresh.svg')"></span>
+                  </button>
+                </div>
+                <div id="usb-devices" class="device-list">
+                  <p class="muted">尚未检测到已授权的 USB 设备。</p>
+                </div>
+                <div class="card-foot muted small">
+                  浏览器只会在你点击按钮后弹出 USB 选择框。
+                </div>
+              </article>
+
+              <article class="card">
+                <div class="card-head">
+                  <div>
+                    <h3>连接步骤</h3>
+                    <p class="muted">首次连接通常需要 1–2 分钟。</p>
+                  </div>
+                </div>
+                <ol class="steps">
+                  <li>在设备上打开「开发者选项 → USB 调试」。</li>
+                  <li>用支持数据传输的 USB 线连接电脑。</li>
+                  <li>在浏览器弹窗中选择设备，再在设备上允许 USB 调试。</li>
+                  <li>如果提示接口被占用，先在本机执行 <code>adb kill-server</code>。</li>
+                </ol>
+                <div class="callout info small">
+                  Windows 需要设备使用 WinUSB 驱动；未识别时请安装 Google USB Driver
+                  或 UniversalAdbDriver。
+                </div>
+              </article>
+            </div>
+
+            <article class="card wireless-card">
+              <div class="card-head">
+                <div>
+                  <h3>无线调试</h3>
+                  <p class="muted">浏览器版不支持无线连接与无线配对。</p>
+                </div>
+                <span class="tag">不支持</span>
+              </div>
+              <div class="wireless-row">
+                <label>
+                  <span>连接地址</span>
+                  <input class="input" placeholder="192.168.1.20:5555" readonly data-wireless-field />
+                </label>
+                <label>
+                  <span>配对码</span>
+                  <input class="input" placeholder="6 位配对码" readonly data-wireless-field />
+                </label>
+                <button class="button outlined" data-wireless>连接</button>
+              </div>
+            </article>
+          </section>
+
+          <!-- 概览 -->
+          <section class="view hidden" data-view="overview">
+            <div id="overview-hero" class="device-hero card"></div>
+            <div id="overview-grid" class="grid stats"></div>
+            <article class="card">
+              <div class="card-head">
+                <div>
+                  <h3>电源与重启</h3>
+                  <p class="muted">重启会中断当前 USB 连接。</p>
+                </div>
+              </div>
+              <div class="row wrap">
+                <button class="button outlined" data-reboot="recovery">重启到 Recovery</button>
+                <button class="button outlined" data-reboot="bootloader">重启到 Bootloader</button>
+                <button class="button outlined" data-reboot="fastbootd">重启到 Fastbootd</button>
+                <button class="button outlined" data-reboot="sideload">重启到 Sideload</button>
+                <button class="button danger" data-reboot="system">普通重启</button>
+              </div>
+            </article>
+          </section>
+
+          <!-- 应用 -->
+          <section class="view hidden" data-view="apps">
+            <div class="toolbar card">
+              <div class="row wrap grow">
+                <input id="apps-search" class="input" type="search" placeholder="搜索包名" />
+                <select id="apps-scope" class="input select">
+                  <option value="user">用户应用</option>
+                  <option value="system">系统应用</option>
+                  <option value="all">全部应用</option>
+                </select>
+                <button id="apps-refresh" class="button tonal">
+                  <span class="icon" style="--icon: url('icons/refresh.svg')"></span>刷新
+                </button>
+              </div>
+              <div class="row wrap">
+                <button id="apps-install" class="button filled">
+                  <span class="icon" style="--icon: url('icons/add.svg')"></span>安装 APK
+                </button>
+                <input id="apps-file" type="file" accept=".apk" multiple class="hidden" />
+              </div>
+            </div>
+            <div id="install-options" class="card options-row">
+              <label class="check"><input type="checkbox" id="opt-replace" checked />覆盖安装 <code>-r</code></label>
+              <label class="check"><input type="checkbox" id="opt-downgrade" />允许降级 <code>-d</code></label>
+              <label class="check"><input type="checkbox" id="opt-grant" />授予全部权限 <code>-g</code></label>
+              <label class="check"><input type="checkbox" id="opt-test" />允许测试包 <code>-t</code></label>
+            </div>
+            <div id="apps-list" class="list card"></div>
+          </section>
+
+          <!-- 文件 -->
+          <section class="view hidden" data-view="files">
+            <div class="toolbar card">
+              <div class="row grow">
+                <button id="files-up" class="icon-button" title="上一级">
+                  <span class="icon" style="--icon: url('icons/arrow_upward.svg')"></span>
+                </button>
+                <input id="files-path" class="input grow" value="/sdcard" spellcheck="false" />
+                <button id="files-go" class="button tonal">打开</button>
+              </div>
+              <div class="row">
+                <button id="files-upload" class="button filled">
+                  <span class="icon" style="--icon: url('icons/add.svg')"></span>上传
+                </button>
+                <button id="files-mkdir" class="button outlined">新建文件夹</button>
+                <button id="files-refresh" class="icon-button" title="刷新">
+                  <span class="icon" style="--icon: url('icons/refresh.svg')"></span>
+                </button>
+                <input id="files-input" type="file" multiple class="hidden" />
+              </div>
+            </div>
+            <div id="files-list" class="list card"></div>
+          </section>
+
+          <!-- 终端 -->
+          <section class="view hidden" data-view="terminal">
+            <article class="card terminal-card">
+              <div class="card-head">
+                <div>
+                  <h3>ADB Shell</h3>
+                  <p class="muted">每条命令在设备上独立执行，支持 stdout / stderr / 退出码。</p>
+                </div>
+                <button id="terminal-clear" class="button text">清空</button>
+              </div>
+              <div id="terminal-output" class="terminal-output"></div>
+              <form id="terminal-form" class="terminal-form">
+                <span class="prompt">$</span>
+                <input id="terminal-input" class="input mono" placeholder="输入命令，例如 getprop ro.product.model" autocomplete="off" />
+                <button class="button filled" type="submit">执行</button>
+              </form>
+              <div class="row wrap quick">
+                <button class="chip" data-cmd="getprop ro.product.model">型号</button>
+                <button class="chip" data-cmd="dumpsys battery">电池</button>
+                <button class="chip" data-cmd="pm list packages -3">用户应用</button>
+                <button class="chip" data-cmd="ip route">网络</button>
+                <button class="chip" data-cmd="logcat -d -t 100">最近日志</button>
+              </div>
+            </article>
+          </section>
+
+          <!-- 日志 -->
+          <section class="view hidden" data-view="logs">
+            <div class="toolbar card">
+              <div class="row wrap grow">
+                <select id="logs-level" class="input select">
+                  <option value="verbose">Verbose</option>
+                  <option value="debug">Debug</option>
+                  <option value="info">Info</option>
+                  <option value="warn">Warn</option>
+                  <option value="error">Error</option>
+                </select>
+                <input id="logs-filter" class="input" type="search" placeholder="按关键字过滤" />
+                <button id="logs-toggle" class="button filled">开始抓取</button>
+                <button id="logs-clear" class="button outlined">清空设备日志</button>
+                <button id="logs-download" class="button outlined">导出</button>
+              </div>
+              <div class="row small muted">
+                <span id="logs-count">0 行</span>
+                <label class="check"><input type="checkbox" id="logs-follow" checked />自动滚动</label>
+              </div>
+            </div>
+            <div id="logs-output" class="log-output card"></div>
+          </section>
+
+          <!-- 屏幕 -->
+          <section class="view hidden" data-view="screen">
+            <div class="grid two screen-grid">
+              <article class="card">
+                <div class="card-head">
+                  <div>
+                    <h3>截图与录屏</h3>
+                    <p class="muted">截图直接读取设备 PNG；录屏为 10 秒 MP4。</p>
+                  </div>
+                </div>
+                <div id="screen-preview" class="screen-preview">
+                  <p class="muted">还没有截图</p>
+                </div>
+                <div class="row wrap">
+                  <button id="screen-shot" class="button filled">
+                    <span class="icon" style="--icon: url('icons/screenshot_monitor.svg')"></span>截图
+                  </button>
+                  <button id="screen-record" class="button outlined">
+                    <span class="icon" style="--icon: url('icons/play_circle.svg')"></span>录制 10 秒
+                  </button>
+                  <a id="screen-download" class="button text hidden" download>下载截图</a>
+                </div>
+              </article>
+
+              <div class="stack">
+                <article class="card">
+                  <div class="card-head"><h3>按键与文字</h3></div>
+                  <div class="row wrap keys">
+                    <button class="chip" data-key="4">返回</button>
+                    <button class="chip" data-key="3">主页</button>
+                    <button class="chip" data-key="187">最近任务</button>
+                    <button class="chip" data-key="26">电源</button>
+                    <button class="chip" data-key="24">音量 +</button>
+                    <button class="chip" data-key="25">音量 −</button>
+                  </div>
+                  <form id="text-form" class="row">
+                    <input id="text-input" class="input grow" placeholder="发送到当前输入框的文字" />
+                    <button class="button tonal" type="submit">发送</button>
+                  </form>
+                </article>
+
+                <article class="card">
+                  <div class="card-head"><h3>显示设置</h3></div>
+                  <div class="row wrap">
+                    <input id="display-size" class="input" placeholder="分辨率 450x450" />
+                    <button id="display-size-apply" class="button tonal">应用</button>
+                    <button id="display-size-reset" class="button text">重置</button>
+                  </div>
+                  <div class="row wrap">
+                    <input id="display-density" class="input" placeholder="DPI 320" />
+                    <button id="display-density-apply" class="button tonal">应用</button>
+                    <button id="display-density-reset" class="button text">重置</button>
+                  </div>
+                  <div class="row wrap">
+                    <select id="display-rotation" class="input select">
+                      <option value="0">0°</option>
+                      <option value="1">90°</option>
+                      <option value="2">180°</option>
+                      <option value="3">270°</option>
+                    </select>
+                    <button id="display-rotation-apply" class="button tonal">旋转</button>
+                  </div>
+                </article>
+              </div>
+            </div>
+          </section>
+
+          <!-- 关于 / 下载 -->
+          <section class="view hidden" data-view="about">
+            <div class="hero small-hero">
+              <div class="hero-copy">
+                <span class="eyebrow">浏览器版的边界</span>
+                <h2>需要完整功能？下载桌面客户端</h2>
+                <p>
+                  浏览器无法访问局域网 TCP，也无法执行本机 adb / hdc 进程。
+                  无线调试、HarmonyOS hdc、远程控制、签名与 AGC 登录只在桌面客户端中提供。
+                </p>
+                <div class="hero-actions">
+                  <a class="button filled" href="https://github.com/Genouka/rarebox_desktop_next/releases" target="_blank" rel="noreferrer">
+                    下载桌面客户端
+                  </a>
+                </div>
+              </div>
+            </div>
+            <div class="grid two">
+              <article class="card">
+                <h3>浏览器版支持</h3>
+                <ul class="features">
+                  <li>USB / WebUSB 直连 Android 设备</li>
+                  <li>设备概览、应用管理、APK 安装</li>
+                  <li>文件浏览、上传、下载、删除</li>
+                  <li>Shell 终端、logcat、截图与录屏</li>
+                  <li>按键、文字、分辨率、DPI、旋转</li>
+                </ul>
+              </article>
+              <article class="card">
+                <h3>浏览器版不支持</h3>
+                <ul class="features muted">
+                  <li>无线调试 / 无线配对 / TCP/IP 切换</li>
+                  <li>HarmonyOS hdc 设备</li>
+                  <li>实时远程控制（scrcpy 镜像）</li>
+                  <li>HarmonyOS 签名与 AGC 登录</li>
+                  <li>检查更新、公告与驱动安装</li>
+                </ul>
+              </article>
+            </div>
+            <article class="card">
+              <h3>安全与隐私</h3>
+              <p class="muted">
+                ADB 密钥只保存在当前浏览器的 localStorage 中，首次连接时生成。
+                清除站点数据后，需要在设备上重新允许 USB 调试。设备数据不会上传到服务器。
+              </p>
+            </article>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div id="busy" class="busy hidden">
+      <div class="spinner"></div>
+      <span id="busy-label">正在处理…</span>
+    </div>
+
+    <div id="toasts" class="toasts"></div>
+
+    <div id="modal" class="modal-backdrop hidden">
+      <div class="modal" role="dialog" aria-modal="true">
+        <h2 id="modal-title"></h2>
+        <div id="modal-body" class="modal-body"></div>
+        <div id="modal-actions" class="modal-actions"></div>
+      </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

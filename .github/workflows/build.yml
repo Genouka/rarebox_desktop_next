@@ -1,0 +1,218 @@
+name: Build
+
+# 所有平台构建集中在一个工作流里，并按宿主系统合并原本独立的工作流：
+#   linux   = Linux 桌面 + Android APK + 浏览器版 + hdc(linux/android)
+#   windows = Windows 桌面 + hdc(windows)
+#   macos   = macOS 桌面 + iOS + hdc(macos)
+#
+# Windows 构建依赖 MSVC/NASM，macOS/iOS 依赖 Apple SDK/Xcode；两者都无法在 Linux
+# 上可靠交叉编译，因此 3 个 job 是最小机器数。每个 job 内部共享 checkout、Rust
+# 工具链、缓存和系统依赖，避免以前每个目标重复启动 runner。
+#
+# DCO（PR 专用检查）与 HarmonyOS（独立 2 GB SDK、里程碑不同）保持独立工作流。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux / Android / Web
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      # Android SDK + NDK、三个 Rust 目标与 Gradle 缓存合计可能超过默认剩余空间。
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android/sdk/ndk \
+                      /usr/local/lib/android/sdk/system-images \
+                      /usr/local/lib/android/sdk/emulator
+          if [ -n "${AGENT_TOOLSDIRECTORY:-}" ]; then
+            sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          fi
+          sudo apt-get clean
+          df -h
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          # Recent SDK repos no longer provide the legacy `tools` package.
+          packages: "platform-tools"
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager --install \
+            "ndk;27.2.12479018" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown,aarch64-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-unified
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config cmake nasm perl clang libclang-dev \
+            libssl-dev libuv1-dev libusb-1.0-0-dev liblz4-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxcb-util-dev libfontconfig1-dev libfreetype6-dev \
+            libglib2.0-dev libdbus-1-dev libvulkan-dev \
+            libasound2-dev libpulse-dev
+
+      - name: Install build tools
+        run: |
+          cargo install cargo-ndk --locked
+          cargo install wasm-bindgen-cli --version 0.2.130 --locked
+
+      - name: Build bundled hdc (Linux)
+        run: ./script/build_hdc.sh linux
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hdc-linux
+          path: vendor/hdc/linux/
+          if-no-files-found: error
+
+      - name: Build and package Linux desktop
+        run: ./script/package_linux.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rarebox-desktop-linux
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+      # package_android.sh 会顺带构建内置 hdc（libhdc.so + OpenSSL/libusb）。
+      - name: Build Android APK
+        run: ./script/package_android.sh release
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rarebox-desktop-android
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hdc-android
+          path: android/app/src/main/jniLibs/
+          if-no-files-found: error
+
+      - name: Build web (WebUSB)
+        run: bash script/build_web.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rarebox-web
+          path: dist/web
+          if-no-files-found: error
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-unified
+
+      - name: Install NASM and hdc build dependencies
+        run: choco install nasm strawberryperl -y --no-progress
+
+      - name: Build and package Windows desktop
+        shell: pwsh
+        run: ./script/package_windows.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rarebox-desktop-windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Build bundled hdc (Windows)
+        shell: bash
+        run: ./script/build_hdc.sh windows
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hdc-windows
+          path: vendor/hdc/windows/
+          if-no-files-found: error
+
+  macos:
+    name: macOS / iOS
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-unified
+
+      - name: Install hdc and iOS build dependencies
+        run: brew install openssl@3 libuv libusb lz4 pkg-config xcodegen
+
+      - name: Build bundled hdc (macOS)
+        run: ./script/build_hdc.sh macos
+        env:
+          PKG_CONFIG_PATH: ${{ env.HOMEBREW_PREFIX }}/opt/openssl@3/lib/pkgconfig:${{ env.HOMEBREW_PREFIX }}/opt/libuv/lib/pkgconfig:${{ env.HOMEBREW_PREFIX }}/opt/libusb/lib/pkgconfig:${{ env.HOMEBREW_PREFIX }}/opt/lz4/lib/pkgconfig
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hdc-macos
+          path: vendor/hdc/macos/
+          if-no-files-found: error
+
+      - name: Build and package macOS app
+        run: ./script/package_macos.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rarebox-desktop-macos-universal
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Build unsigned iOS IPA
+        run: ./script/package_ios.sh release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rarebox-desktop-ios-unsigned
+          path: dist/*.ipa
+          if-no-files-found: error

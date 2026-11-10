@@ -1,5 +1,12 @@
 [workspace]
-members = ["crates/rarebox-core", "crates/rarebox-ffi"]
+members = [
+    "crates/rarebox-core",
+    "crates/rarebox-ffi",
+    "crates/rarebox-ohos",
+    "crates/rarebox-web",
+    "crates/rarebox-adb-proto",
+    "crates/gpui-ohos",
+]
 resolver = "3"
 
 [package]
@@ -42,12 +49,14 @@ rand = "0.8"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # 桌面端：gpui-pre 的平台实现拆分为独立 crate。Android / iOS 改用 gpui-mobile，
-# 因此这些依赖只在桌面目标上启用。
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# HarmonyOS 使用 `gpui-ohos`（target_env = "ohos"），因此这些依赖只在桌面目标上启用。
+[target.'cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))'.dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.6" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.6" }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+# OHOS 三元组是 `*-linux-ohos`，`target_os` 仍是 linux；必须排除 target_env=ohos，
+# 否则鸿蒙构建会拉入 wayland/x11。
+[target.'cfg(all(target_os = "linux", not(target_env = "ohos")))'.dependencies]
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.6", features = [
     "wayland",
     "x11",
@@ -76,6 +85,12 @@ gpui-mobile = { path = "vendor/gpui-mobile", default-features = false, features 
 # 仓库内的 material3-gpui 源码来自上方 Git 仓库，用于在无网络/受限网络环境下可复现构建。
 [patch."https://github.com/TNTyep520/material3-gpui.git"]
 material3-gpui = { path = "vendor/material3-gpui" }
+
+# openh264-sys2 不认识 target_env = "ohos"（上游 build.rs 直接 panic），仓库内副本
+# 只加了这个环境分支；OHOS 的 target_os 仍是 linux，因此复用上游 Linux 构建路径。
+# 见 vendor/openh264-sys2/VENDORED.md。
+[patch.crates-io]
+openh264-sys2 = { path = "vendor/openh264-sys2" }
 
 # OpenHarmony HAP/HSP 签名内核：https://github.com/harmony-contrib/hapsigner-rs
 # 仓库内副本为 main 快照，仅放宽上游对 time 的精确版本锁定，见 vendor/hapsigner/VENDORED.md。

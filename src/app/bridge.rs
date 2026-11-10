@@ -88,7 +88,9 @@ impl RareBox {
                         modal.privacy = privacy;
                     }
                     modal.loading = false;
-                    modal.error = docs.error.map(|err| format!("{err}；已使用内置条款，仍可继续。"));
+                    modal.error = docs
+                        .error
+                        .map(|err| format!("{err}；已使用内置条款，仍可继续。"));
                     cx.notify();
                 }
             }
@@ -163,10 +165,9 @@ impl RareBox {
         self.selected_serial = state.selected_serial.clone();
         self.snapshot = state.snapshot.clone();
         self.snapshot_at = state.snapshot_at.clone();
-        self.activity = state
-            .activity
-            .as_ref()
-            .map(|label| Activity { label: label.clone().into() });
+        self.activity = state.activity.as_ref().map(|label| Activity {
+            label: label.clone().into(),
+        });
 
         self.packages = state.packages.clone();
         self.package_scope = state.package_scope;
@@ -261,9 +262,7 @@ impl RareBox {
             PickPurpose::SigningHap => ("选择要签名并安装的 HAP / HSP 包", true),
             PickPurpose::SigningImportFile(which) => (
                 match which {
-                    rarebox_core::signing::ImportFile::Keystore => {
-                        "选择密钥库（.p12 / .jks）"
-                    }
+                    rarebox_core::signing::ImportFile::Keystore => "选择密钥库（.p12 / .jks）",
                     rarebox_core::signing::ImportFile::Cert => "选择应用证书（.cer / .pem）",
                     rarebox_core::signing::ImportFile::Profile => "选择 Profile（.p7b）",
                 },
@@ -322,7 +321,11 @@ impl RareBox {
     }
 }
 
-fn set_field(field: &gpui::Entity<material3_gpui::prelude::TextFieldState>, value: &str, cx: &mut Context<RareBox>) {
+fn set_field(
+    field: &gpui::Entity<material3_gpui::prelude::TextFieldState>,
+    value: &str,
+    cx: &mut Context<RareBox>,
+) {
     field.update(cx, |state, cx| state.set_value(value, cx));
 }
 
@@ -344,11 +347,7 @@ fn build_remote_image(frame: &rarebox_core::VideoFrame) -> Option<Arc<gpui::Rend
     if frame.width == 0 || frame.height == 0 {
         return None;
     }
-    let buffer = image::ImageBuffer::from_raw(
-        frame.width,
-        frame.height,
-        frame.bgra.clone(),
-    )?;
+    let buffer = image::ImageBuffer::from_raw(frame.width, frame.height, frame.bgra.clone())?;
     let image = image::Frame::new(buffer);
     Some(Arc::new(gpui::RenderImage::new(smallvec::smallvec![image])))
 }
@@ -365,4 +364,3 @@ fn open_url(url: &str) {
         }
     }
 }
-

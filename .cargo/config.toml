@@ -1,2 +1,6 @@
 [net]
 git-fetch-with-cli = true
+
+# WebUSB（navigator.usb）在 web-sys 中仍标记为 unstable API；浏览器目标需要该 cfg。
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "web_sys_unstable_apis"]

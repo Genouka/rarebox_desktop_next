@@ -1,0 +1,78 @@
+name: HarmonyOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  # 与 ohos/build-profile.json5、ohos/hvigor/hvigor-config.json5 的 26.0.0 对齐。
+  # 升级 SDK 时同时改这三个地方（含 ErBWs/ohos-sdk 的可用版本）。
+  OHOS_CLI_VERSION: 26.0.0.821
+
+jobs:
+  # 宿主侧单元测试：不需要 HarmonyOS SDK，先跑，失败就不必再拉 2 GB 工具链。
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ohos-test
+
+      - name: Test engine, bindings and platform backend
+        run: cargo test -p rarebox-core -p rarebox-ohos -p gpui-ohos
+
+      - name: Test ADB protocol crate
+        run: cargo test -p rarebox-adb-proto
+
+  # 交叉编译 + HAP 打包。CLI tools 由 ErBWs/setup-ohos 安装：
+  # 华为官方下载需要账号（直链 403），这里用公开镜像，校验和在 action 内完成。
+  hap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-ohos
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ohos-hap
+
+      - name: Setup HarmonyOS CLI tools
+        id: ohos
+        uses: ErBWs/setup-ohos@v2
+        with:
+          version: ${{ env.OHOS_CLI_VERSION }}
+          cache: true
+
+      - name: Show toolchain versions
+        run: |
+          echo "SDK ${{ steps.ohos.outputs.sdk-version }} / API ${{ steps.ohos.outputs.api-version }}"
+          hvigorw -v
+          rustc -V
+
+      # 同一个入口复现本地双门：cargo check --target aarch64-unknown-linux-ohos
+      # 然后 hvigorw assembleHap。脚本会自动识别 HOS_SDK_HOME（CLI tools 布局）。
+      - name: Cross-check and build HAP
+        run: bash script/check_ohos.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rarebox-ohos-hap
+          path: dist/ohos/*.hap
+          if-no-files-found: error

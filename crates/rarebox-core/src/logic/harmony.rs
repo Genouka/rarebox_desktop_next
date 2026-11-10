@@ -13,7 +13,9 @@ use crate::hdc::{
     self, HdcClient, HdcDevice, HdcForward, HdcInstallOptions, HdcKey, HdcRebootTarget,
     HdcSwipeDirection, HdcTap, HilogOptions,
 };
-use crate::state::{ConfirmKind, DeviceKind, HdcInstallReport, LogFilter, ToastKind, TerminalEntry};
+use crate::state::{
+    ConfirmKind, DeviceKind, HdcInstallReport, LogFilter, TerminalEntry, ToastKind,
+};
 
 const MAX_TERMINAL: usize = 20;
 const MAX_OUTPUT: usize = 20_000;
@@ -65,7 +67,13 @@ impl Core {
         let previous = self.state.harmony.selected.clone();
         self.state.harmony.devices = devices;
         let next = previous
-            .filter(|key| self.state.harmony.devices.iter().any(|device| &device.key == key))
+            .filter(|key| {
+                self.state
+                    .harmony
+                    .devices
+                    .iter()
+                    .any(|device| &device.key == key)
+            })
             .or_else(|| {
                 self.state
                     .harmony
@@ -215,10 +223,7 @@ impl Core {
                 })
             });
         let Some(address) = key else {
-            cx.toast(
-                ToastKind::Info,
-                "请选择一台无线设备，或填写要断开的地址",
-            );
+            cx.toast(ToastKind::Info, "请选择一台无线设备，或填写要断开的地址");
             return;
         };
         let result = self.hdc_client();
@@ -820,12 +825,7 @@ impl Core {
         );
     }
 
-    pub(crate) fn clear_hdc_app_data(
-        &mut self,
-        bundle: String,
-        cache_only: bool,
-        cx: &mut Ctx,
-    ) {
+    pub(crate) fn clear_hdc_app_data(&mut self, bundle: String, cache_only: bool, cx: &mut Ctx) {
         let result = self.require_hdc_device();
         let Ok((client, key)) = result else {
             if let Err(err) = result {
@@ -954,7 +954,12 @@ impl Core {
     }
 
     pub(crate) fn go_parent_hdc_files(&mut self, cx: &mut Ctx) {
-        let current = self.state.harmony.files_path.trim_end_matches('/').to_string();
+        let current = self
+            .state
+            .harmony
+            .files_path
+            .trim_end_matches('/')
+            .to_string();
         let parent = match current.rfind('/') {
             Some(0) | None => "/".to_string(),
             Some(index) => current[..index].to_string(),
@@ -1067,10 +1072,7 @@ impl Core {
                 Ok(())
             },
             move |_core, result, cx| match result {
-                Ok(()) => cx.toast(
-                    ToastKind::Success,
-                    format!("已发送{}键", key_event.label()),
-                ),
+                Ok(()) => cx.toast(ToastKind::Success, format!("已发送{}键", key_event.label())),
                 Err(err) => cx.toast(ToastKind::Error, format!("按键失败：{err:#}")),
             },
         );
@@ -1099,10 +1101,7 @@ impl Core {
                 Ok(())
             },
             move |_core, result, cx| match result {
-                Ok(()) => cx.toast(
-                    ToastKind::Success,
-                    format!("已{}({x}, {y})", tap.label()),
-                ),
+                Ok(()) => cx.toast(ToastKind::Success, format!("已{}({x}, {y})", tap.label())),
                 Err(err) => cx.toast(ToastKind::Error, format!("操作失败：{err:#}")),
             },
         );
@@ -1133,13 +1132,7 @@ impl Core {
         );
     }
 
-    pub(crate) fn hdc_input_text(
-        &mut self,
-        x: String,
-        y: String,
-        text: String,
-        cx: &mut Ctx,
-    ) {
+    pub(crate) fn hdc_input_text(&mut self, x: String, y: String, text: String, cx: &mut Ctx) {
         let (Some(x), Some(y)) = (parse_coord(&x), parse_coord(&y)) else {
             cx.toast(ToastKind::Error, "坐标必须是 0-20000 之间的整数");
             return;
@@ -1212,7 +1205,6 @@ impl Core {
         self.state.harmony.terminal_input.clear();
         self.run_hdc_command(command, cx);
     }
-
 
     fn run_hdc_command(&mut self, command: String, cx: &mut Ctx) {
         let result = self.require_hdc_device();
@@ -1309,8 +1301,7 @@ impl Core {
                 Ok(lines) => {
                     let count = lines.len();
                     core.state.harmony.logs = lines;
-                    core.state.harmony.logs_at =
-                        Some(Local::now().format("%H:%M:%S").to_string());
+                    core.state.harmony.logs_at = Some(Local::now().format("%H:%M:%S").to_string());
                     cx.toast(ToastKind::Success, format!("已抓取 {count} 行 HiLog"));
                 }
                 Err(err) => cx.toast(ToastKind::Error, format!("抓取 HiLog 失败：{err:#}")),
@@ -1393,12 +1384,7 @@ impl Core {
         self.export_hdc_log_dir("/data/log/hilog/", "harmony-hilog", cx);
     }
 
-    fn export_hdc_log_dir(
-        &mut self,
-        remote: &'static str,
-        prefix: &'static str,
-        cx: &mut Ctx,
-    ) {
+    fn export_hdc_log_dir(&mut self, remote: &'static str, prefix: &'static str, cx: &mut Ctx) {
         let result = self.require_hdc_device();
         let Ok((client, key)) = result else {
             if let Err(err) = result {
