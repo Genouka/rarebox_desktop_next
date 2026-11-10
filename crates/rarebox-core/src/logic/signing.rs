@@ -91,10 +91,14 @@ impl Core {
             move || {
                 let mut logs = Vec::new();
                 let url_sink = event_sink;
-                let result = service.login(cancel, &mut |message| logs.push(message.to_string()), &mut |url| {
-                    let _ = url_sink.try_send(crate::event::Event::OpenUrl(url.to_string()));
-                    Ok(())
-                });
+                let result = service.login(
+                    cancel,
+                    &mut |message| logs.push(message.to_string()),
+                    &mut |url| {
+                        let _ = url_sink.try_send(crate::event::Event::OpenUrl(url.to_string()));
+                        Ok(())
+                    },
+                );
                 Ok((service, logs, result))
             },
             |core, result, cx| match result {
@@ -208,8 +212,8 @@ impl Core {
             },
             move || {
                 let mut logs = Vec::new();
-                let identity =
-                    service.ensure_identity(kind, reset, &mut |message| logs.push(message.to_string()));
+                let identity = service
+                    .ensure_identity(kind, reset, &mut |message| logs.push(message.to_string()));
                 Ok((service, logs, identity))
             },
             |core, result, cx| match result {
@@ -222,10 +226,7 @@ impl Core {
                     }
                     match identity {
                         Ok(identity) => {
-                            cx.toast(
-                                ToastKind::Success,
-                                format!("{} 已就绪", identity.cert_name),
-                            );
+                            cx.toast(ToastKind::Success, format!("{} 已就绪", identity.cert_name));
                         }
                         Err(err) => {
                             let message = format!("{err:#}");
@@ -401,9 +402,7 @@ impl Core {
                             ToastKind::Success,
                             format!("设备已注册：{}", device.device_name),
                         ),
-                        Err(err) => {
-                            cx.toast(ToastKind::Error, format!("注册设备失败：{err:#}"))
-                        }
+                        Err(err) => cx.toast(ToastKind::Error, format!("注册设备失败：{err:#}")),
                     }
                 }
                 Err(err) => cx.toast(ToastKind::Error, format!("注册设备失败：{err:#}")),
@@ -463,10 +462,7 @@ impl Core {
         }
 
         if !self.state.signing.service.is_logged_in() {
-            cx.toast(
-                ToastKind::Error,
-                "请先登录华为开发者账号，或改用导入材料",
-            );
+            cx.toast(ToastKind::Error, "请先登录华为开发者账号，或改用导入材料");
             return;
         }
         let request = FlowRequest {
@@ -530,11 +526,7 @@ impl Core {
             .expect("spawn signing flow");
     }
 
-    pub(crate) fn apply_signing_message(
-        &mut self,
-        message: SigningMessage,
-        cx: &mut Ctx,
-    ) {
+    pub(crate) fn apply_signing_message(&mut self, message: SigningMessage, cx: &mut Ctx) {
         match message {
             SigningMessage::Event { generation, event } => {
                 if self.state.signing.generation == generation {

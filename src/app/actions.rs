@@ -5,12 +5,12 @@
 
 use gpui::Context;
 
+use rarebox_core::Command;
 use rarebox_core::adb::{AppOpMode, RebootTarget};
 use rarebox_core::hdc::{HdcForward, HdcKey, HdcRebootTarget, HdcSwipeDirection, HdcTap};
 use rarebox_core::install::InstallToggle;
 use rarebox_core::signing::{ImportFile, SigningBlock};
 use rarebox_core::state::ToastKind;
-use rarebox_core::Command;
 
 use super::RareBox;
 
@@ -127,7 +127,6 @@ impl RareBox {
     pub(crate) fn stop_package(&mut self, package: String, _cx: &mut Context<Self>) {
         self.core_command(Command::StopPackage { package });
     }
-
 
     pub(crate) fn export_package(&mut self, package: String, _cx: &mut Context<Self>) {
         self.core_command(Command::ExportPackage { package });
@@ -276,11 +275,7 @@ impl RareBox {
         self.core_command(Command::SubmitTerminal { command });
     }
 
-    pub(crate) fn run_quick_command(
-        &mut self,
-        command: impl Into<String>,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn run_quick_command(&mut self, command: impl Into<String>, cx: &mut Context<Self>) {
         let command = command.into();
         self.terminal_input = command.clone();
         self.terminal_field
@@ -411,11 +406,7 @@ impl RareBox {
         self.core_command(Command::SigningToggleImported);
     }
 
-    pub(crate) fn signing_pick_import_file(
-        &mut self,
-        which: ImportFile,
-        _cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn signing_pick_import_file(&mut self, which: ImportFile, _cx: &mut Context<Self>) {
         self.core_command(Command::PickSigningImportFile { which });
     }
 
@@ -464,7 +455,6 @@ impl RareBox {
     pub(crate) fn hdc_disconnect(&mut self, _cx: &mut Context<Self>) {
         self.core_command(Command::HdcDisconnect);
     }
-
 
     pub(crate) fn open_hdc_server_restart(&mut self, _cx: &mut Context<Self>) {
         self.core_command(Command::HdcOpenRestartServer);
@@ -533,7 +523,6 @@ impl RareBox {
         self.core_command(Command::HdcStopPackage { bundle });
     }
 
-
     pub(crate) fn copy_hdc_bundle(&mut self, bundle: String, _cx: &mut Context<Self>) {
         self.core_command(Command::HdcCopyBundle { bundle });
     }
@@ -557,7 +546,6 @@ impl RareBox {
             cache: cache_only,
         });
     }
-
 
     pub(crate) fn open_hdc_scheme(&mut self, uri: String, _cx: &mut Context<Self>) {
         self.core_command(Command::HdcOpenScheme { uri });
@@ -645,7 +633,6 @@ impl RareBox {
         self.core_command(Command::HdcOpenClearLogs);
     }
 
-
     pub(crate) fn export_hdc_faultlog(&mut self, _cx: &mut Context<Self>) {
         self.core_command(Command::HdcExportFaultlog);
     }
@@ -661,7 +648,6 @@ impl RareBox {
     pub(crate) fn open_hdc_reboot(&mut self, target: HdcRebootTarget, _cx: &mut Context<Self>) {
         self.core_command(Command::HdcOpenReboot { target });
     }
-
 
     // ---------------------------------------------------------------------
     // 重启菜单
@@ -687,8 +673,7 @@ impl RareBox {
                 MenuItem::new(target.menu_label())
                     .icon(IconName::new(target.icon()))
                     .on_click(move |_, cx| {
-                        if let Err(err) =
-                            weak.update(cx, |app, cx| app.request_reboot(target, cx))
+                        if let Err(err) = weak.update(cx, |app, cx| app.request_reboot(target, cx))
                         {
                             eprintln!("RareBox Desktop: 重启设备失败: {err}");
                         }
@@ -725,8 +710,7 @@ impl RareBox {
                 MenuItem::new(target.label())
                     .icon(IconName::new(target.icon()))
                     .on_click(move |_, cx| {
-                        if let Err(err) =
-                            weak.update(cx, |app, cx| app.open_hdc_reboot(target, cx))
+                        if let Err(err) = weak.update(cx, |app, cx| app.open_hdc_reboot(target, cx))
                         {
                             eprintln!("RareBox Desktop: 打开鸿蒙重启确认失败: {err}");
                         }
@@ -746,6 +730,4 @@ impl RareBox {
     // ---------------------------------------------------------------------
     // 确认框（UI 外部入口）
     // ---------------------------------------------------------------------
-
 }
-

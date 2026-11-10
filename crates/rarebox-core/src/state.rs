@@ -18,9 +18,7 @@ use super::update::{Announcement, UpdateStatus};
 ///
 /// ADB 与 hdc 共用同一套页面，具体操作按当前设备类型分发；只有一方支持的功能
 /// 会在对应页面中隐藏或禁用。
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceKind {
     #[default]
@@ -47,9 +45,7 @@ pub enum RemotePhase {
 }
 
 /// 应用列表的筛选范围。
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PackageScope {
     User,
@@ -71,9 +67,7 @@ impl PackageScope {
 }
 
 /// Logcat / HiLog 的级别筛选。
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LogFilter {
     All,

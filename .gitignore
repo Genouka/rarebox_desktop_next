@@ -19,6 +19,19 @@ Thumbs.db
 /android/captures/
 /android/app/src/main/jniLibs/
 
+# HarmonyOS / DevEco
+/ohos/**/build/
+/ohos/**/.cxx/
+/ohos/**/oh_modules/
+/ohos/.hvigor/
+/ohos/**/.preview/
+/ohos/local.properties
+/ohos/oh-package-lock.json5
+/crates/rarebox-ohos/harmony/
+/ohos/entry/libs/
+# 工作区成员由根 Cargo.lock 统一锁定，忽略实验 crate 的独立锁文件。
+/crates/rarebox-adb-proto/Cargo.lock
+
 # 各平台现编的 hdc（Windows 二进制随仓库分发，见 src/hdc_bundle.rs）
 /vendor/hdc/linux/
 /vendor/hdc/macos/
@@ -27,6 +40,7 @@ Thumbs.db
 # 本地审计/临时站点副本
 .tmp-sitecheck/
 .tmp-*/
+.tmp-*
 # 营销素材与内部文档
 /promo/
 /项目说明书.md

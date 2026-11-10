@@ -25,7 +25,10 @@ const HDC_VERSION: &str = "3.2.0g";
 /// 需要随 `hdc.exe` 一起写出的文件：主程序在前，依赖 DLL 紧跟。
 #[cfg(windows)]
 const BUNDLED_FILES: &[(&str, &[u8])] = &[
-    ("hdc.exe", include_bytes!("../../../vendor/hdc/windows/hdc.exe")),
+    (
+        "hdc.exe",
+        include_bytes!("../../../vendor/hdc/windows/hdc.exe"),
+    ),
     (
         "libusb-1.0.dll",
         include_bytes!("../../../vendor/hdc/windows/libusb-1.0.dll"),

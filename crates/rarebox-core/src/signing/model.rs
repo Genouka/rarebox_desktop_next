@@ -336,9 +336,7 @@ pub struct HapMeta {
 }
 
 /// 签名块版本。
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SigningBlock {
     /// V2：`HAP Sig Block 42`，兼容较旧设备。

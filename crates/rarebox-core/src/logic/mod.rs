@@ -141,9 +141,7 @@ impl Core {
             Command::SigningToggleResetCert => self.signing_toggle_reset_cert(),
             Command::SigningToggleRefreshProfile => self.signing_toggle_refresh_profile(),
             Command::SigningToggleLogs => self.signing_toggle_logs(),
-            Command::SigningSetImportAlias { value } => {
-                self.state.signing.set_import_alias(value)
-            }
+            Command::SigningSetImportAlias { value } => self.state.signing.set_import_alias(value),
             Command::SigningSetImportPassword { value } => {
                 self.state.signing.set_import_password(value)
             }
@@ -165,9 +163,7 @@ impl Core {
             Command::HdcLoadPackages => self.load_hdc_packages(cx),
             Command::PickInstallHaps => self.pick_install_haps(cx),
             Command::HdcInstallHaps { paths } => self.install_hap_files(paths, cx),
-            Command::HdcToggleInstallOption { shared } => {
-                self.toggle_hdc_install_option(shared)
-            }
+            Command::HdcToggleInstallOption { shared } => self.toggle_hdc_install_option(shared),
             Command::HdcLaunchPackage { bundle } => self.launch_hdc_package(bundle, cx),
             Command::HdcStopPackage { bundle } => self.stop_hdc_package(bundle, cx),
             Command::HdcUninstallPackage { bundle } => self.uninstall_hdc_package(bundle, cx),
@@ -209,7 +205,6 @@ impl Core {
         }
     }
 
-
     pub fn adb_client(&self) -> Result<AdbClient> {
         let path = self
             .state
@@ -250,7 +245,6 @@ impl Core {
         Ok((client, key))
     }
 
-
     fn fetch_legal(&mut self, cx: &mut Ctx) {
         let eula = crate::legal::fetch_legal(crate::legal::LegalDocKind::Eula);
         let privacy = crate::legal::fetch_legal(crate::legal::LegalDocKind::Privacy);
@@ -277,8 +271,7 @@ impl Core {
     }
 
     fn accept_legal(&mut self) {
-        self.state.config.accepted_legal_version =
-            Some(crate::legal::LEGAL_VERSION.to_string());
+        self.state.config.accepted_legal_version = Some(crate::legal::LEGAL_VERSION.to_string());
         self.save_config();
     }
 

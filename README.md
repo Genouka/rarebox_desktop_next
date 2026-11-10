@@ -86,6 +86,12 @@ cargo run --release
 
 如果依赖 Git 访问受限，仓库已经将 `material3-gpui` 放到 `vendor/material3-gpui`，并通过 `Cargo.toml` 的 `[patch]` 指向本地副本；`.cargo/config.toml` 启用了 `git-fetch-with-cli`。
 
+桌面与移动端的发布构建集中在 `.github/workflows/build.yml`：Ubuntu job 在同一台机器上
+依次完成 Linux 桌面、Android APK、浏览器版与 hdc；Windows job 合并桌面与 hdc；macOS
+job 合并桌面、iOS 与 hdc。Windows/MSVC 与 Apple SDK 无法从 Linux 交叉构建，因此仍保留
+Windows 和 macOS 两个 runner。HarmonyOS 使用独立的 2 GB SDK 与不同里程碑，仍在
+`ohos.yml`；DCO 是 PR 专用检查，保留在 `dco.yml`。
+
 ### macOS
 
 macOS 版需要 Apple 平台工具链，无法用普通 Rust 交叉编译从 Windows 产出：gpui 要链接 Metal/AppKit，`ring`（rustls 的加密实现）与 `openh264-sys2`（解码器）要编译 C/C++ 与汇编，均依赖 Xcode 的系统 SDK 与头文件。在 Mac 上执行：
@@ -94,7 +100,7 @@ macOS 版需要 Apple 平台工具链，无法用普通 Rust 交叉编译从 Win
 ./script/package_macos.sh
 ```
 
-脚本会分别构建 Apple Silicon（`aarch64-apple-darwin`）与 Intel（`x86_64-apple-darwin`）版本，用 `lipo` 合并为通用二进制，产出 `dist/RareBox Desktop.app` 与 `dist/RareBox-Desktop-<版本>-macos-universal.zip`，并做 ad-hoc 签名（自行分发需换成开发者证书签名与公证）。`.github/workflows/macos.yml` 在 macOS runner 上执行同一脚本并上传产物。
+脚本会分别构建 Apple Silicon（`aarch64-apple-darwin`）与 Intel（`x86_64-apple-darwin`）版本，用 `lipo` 合并为通用二进制，产出 `dist/RareBox Desktop.app` 与 `dist/RareBox-Desktop-<版本>-macos-universal.zip`，并做 ad-hoc 签名（自行分发需换成开发者证书签名与公证）。`.github/workflows/build.yml` 的 `macos` job 在 macOS runner 上执行同一脚本并上传产物。
 
 ### Android
 
@@ -106,7 +112,7 @@ cargo install cargo-ndk
 ./script/package_android.sh release
 ```
 
-脚本用 `cargo ndk` 交叉编译 `librarebox_desktop.so`（API 26，默认 `arm64-v8a,x86_64`），再调用 Gradle 打包，产出 `dist/RareBox-Desktop-<版本>-android.apk`。默认使用 debug 签名以便直接侧载；正式分发时通过 `-Prarebox.keystore=...`、`-Prarebox.keystore.password=...`、`-Prarebox.key.alias=...`、`-Prarebox.key.password=...` 传入自己的密钥。`.github/workflows/android.yml` 在 Ubuntu runner 上执行同一脚本并上传 APK。
+脚本用 `cargo ndk` 交叉编译 `librarebox_desktop.so`（API 26，默认 `arm64-v8a,x86_64`），再调用 Gradle 打包，产出 `dist/RareBox-Desktop-<版本>-android.apk`。默认使用 debug 签名以便直接侧载；正式分发时通过 `-Prarebox.keystore=...`、`-Prarebox.keystore.password=...`、`-Prarebox.key.alias=...`、`-Prarebox.key.password=...` 传入自己的密钥。`.github/workflows/build.yml` 的 `linux` job 在 Ubuntu runner 上执行同一脚本并上传 APK。
 
 Android 端说明：
 
@@ -131,8 +137,37 @@ pwsh ./script/package_windows.ps1
 ```
 
 产物分别是 `dist/RareBox-Desktop-<版本>-windows-x64.zip` 与
-`dist/RareBox-Desktop-<版本>-linux-x64.tar.gz`。`.github/workflows/windows.yml`
-和 `linux.yml` 在对应 runner 上构建并上传产物。
+`dist/RareBox-Desktop-<版本>-linux-x64.tar.gz`。`.github/workflows/build.yml` 的
+`windows` / `linux` job 在对应 runner 上构建并上传产物。
+
+### 浏览器（WebUSB）
+
+浏览器版把同一套 ADB 能力编译为 WebAssembly，通过 WebUSB 直接和设备里的 `adbd` 通信，
+不依赖本机 adb server。产物是静态站点，可部署到任意 HTTPS 站点；本机调试用
+`localhost` 即可（WebUSB 要求安全上下文）。
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.130
+bash ./script/build_web.sh   # Windows: pwsh ./script/build_web.ps1
+python3 -m http.server 8080 --directory dist/web
+```
+
+打开 `http://localhost:8080`，点击「选择 USB 设备」，在弹出的选择框里选中设备，
+再在设备上允许 USB 调试。首次连接会在浏览器里生成 RSA-2048 ADB 密钥（约 1–3 秒），
+私钥保存在当前站点的 `localStorage`，清除站点数据后需要重新授权。
+
+浏览器版的限制：
+
+- 只支持 USB / WebUSB，**不支持无线调试、无线配对与 TCP/IP 切换**；界面上的无线入口会
+  弹窗说明并推荐下载桌面客户端。
+- 不支持 HarmonyOS hdc、实时投屏（scrcpy）、AGC 登录与 HAP 签名。
+- 使用前需要结束占用 ADB 接口的本机进程（通常是 adb server：`adb kill-server`）。
+  Windows 上设备需要使用 WinUSB 驱动（Google USB Driver / UniversalAdbDriver）。
+- WebUSB 只在 Chromium 系桌面浏览器（Chrome / Edge 89+）中提供，Firefox / Safari 不支持。
+
+`.github/workflows/build.yml` 的 `linux` job 在 Ubuntu runner 上执行同一脚本并上传 `dist/web`。
+
 
 ### iOS（未签名）
 
@@ -146,19 +181,75 @@ rustup target add aarch64-apple-ios
 ```
 
 产物为 `dist/RareBox-Desktop-<版本>-ios-unsigned.ipa`。该包未签名，只能用于
-构建验证或自行签名后侧载；`.github/workflows/ios.yml` 在 macOS runner 上构建
-并上传该未签名包。
+构建验证或自行签名后侧载；`.github/workflows/build.yml` 的 `macos` job 在 macOS runner
+上构建并上传该未签名包。
 
+
+### HarmonyOS（开发中）
+
+当前进度是 **P1（平台后端）**：HAP 工程、引擎 Node-API 绑定、GPUI 鸿蒙平台后端与交叉
+编译链路均已可用，HAP 可带原生库构建；**尚未接入 ArkTS 宿主页面、设备协议仍是 CLI
+实现**，因此产物只能验证编译，不能当作可用客户端。没有真机时以「编译 + 单元测试」
+为验收口径。
+
+```bash
+# 三门门禁：Rust 交叉 check → 原生库（librarebox_ohos.so / libgpui_ohos.so）→ 未签名 HAP
+bash script/check_ohos.sh
+
+# 仅构建 HAP（产物 dist/ohos/entry-default-unsigned.hap）
+bash script/package_ohos.sh
+
+# 仅重建原生库并放入 ohos/entry/libs/arm64-v8a/（OHOS_BUILD_JOBS 默认 2，防 OOM）
+bash script/build_ohos_libs.sh
+```
+
+前置条件：DevEco Studio 26（默认 `C:/Program Files/Huawei/DevEco Studio`，可用
+`DEVECO_HOME` 覆盖）、Rust 目标 `aarch64-unknown-linux-ohos`。脚本自动使用 DevEco
+自带的 node / hvigor / ohpm，不需要全局安装，也不需要联网下载构建插件。
+
+移植的关键约束与设计：
+
+- 鸿蒙普通应用不能 fork/exec（[官方 FAQ](https://developer.huawei.com/consumer/cn/doc/harmonyos-faqs/faqs-ability-112)），
+  因此不能像桌面端那样运行内置 adb / hdc 可执行文件。设备通信要改成应用内直连协议，
+  由 `rarebox-core` 的传输层实现。
+- `crates/rarebox-ohos` 通过 Node-API 暴露引擎（`version` / `createEngine` /
+  `sendCommand` / `stateJson` / `disposeEngine` / `setEventListener`），命令、事件、
+  状态与 C ABI、JNI 共用同一套 JSON。
+- 界面路线是复用现有 GPUI 界面（新增鸿蒙平台后端），不是用 ArkUI 重写。
+- 交叉编译用 `script/ohos_cross.sh`：Windows 上使用 NDK 的 `clang.exe` + `--sysroot`，
+  并把 `C:/Program Files` 解析成 8.3 短路径后传给 cc-rs。
+- `vendor/openh264-sys2` 是上游 0.9.9 的副本，只补了 `target_env = "ohos"` 分支，
+  见 `vendor/openh264-sys2/VENDORED.md`。
+- CI 已加入 `.github/workflows/ohos.yml`：GitHub 托管 runner 上用
+  [`ErBWs/setup-ohos`](https://github.com/ErBWs/setup-ohos) 安装 CLI tools
+  26.0.0.821（华为官方下载需要账号，该 action 走公开镜像并带校验和），
+  跑同一套 `script/check_ohos.sh` 双门并上传 HAP 工件。
+  [`ohosvscode/harmony-next-pipeline`](https://github.com/ohosvscode/harmony-next-pipeline)
+  的镜像内置的是 6.1.1.280（API 24），构建不了 modelVersion 26.0.0 的工程，故未采用。
+- `crates/gpui-ohos` 是 GPUI 的鸿蒙平台后端（EGL/GLES + wgpu、XComponent 输入、
+  IME、字体、vsync、Node-API 宿主面），约 7k 行；非 OHOS 目标编译为空库，纯逻辑
+  （键码表、字体选择、dispatcher、帧步进、vp↔px）在宿主上有 54 个单测。
+- HAP 里的原生库走预编译 `.so`：hvigor 会把 `ohos/entry/libs/<abi>/*.so` 原样打包，
+  不需要 CMake 或 `externalNativeOptions`。
+- 链接必须显式带目标三元组：rustc 调链接器不带 `--target`，OHOS 的 clang 会退回宿主
+  MinGW 的 `ld`（报 `unrecognized option '--eh-frame-hdr'`）；`ohos_cross.sh` 已补
+  `--target` / `--sysroot` / `-fuse-ld=lld`。
 
 ## 代码结构
 
-工程分为三个 crate，业务逻辑与界面彻底分离：
+工程按平台与绑定拆分，业务逻辑与界面彻底分离：
 
 - `crates/rarebox-core`：无界面引擎，不依赖 GPUI。包含设备命令层（ADB / hdc / scrcpy、
   APK/HAP 签名与安装、更新、配置）以及可克隆的 `CoreState`、串行执行的 `Engine`
   （命令队列 + 事件通道 + 状态快照）。所有业务逻辑与单元测试都在这一层。
 - `crates/rarebox-ffi`：跨语言绑定（C ABI + Android JNI），命令/事件走 JSON，
   远程画面走独立 BGRA 二进制回调。
+- `crates/rarebox-ohos`：鸿蒙宿主绑定（Node-API），把 `Engine` 暴露给 ArkTS；
+  命令/事件/状态与 C ABI、JNI 共用同一套 JSON。非 OHOS 目标只编译出空库。
+- `crates/rarebox-adb-proto`：纯 Rust 的 ADB host 协议实现（TCP），供鸿蒙等不能
+  执行外部 adb 二进制的平台使用；自带进程内假 adbd 集成测试。
+- `crates/gpui-ohos`：GPUI 的鸿蒙平台后端（EGL/GLES + wgpu、XComponent 输入/IME、
+  字体、vsync、Node-API 宿主面）。非 OHOS 目标只编译空库，纯逻辑在宿主单测。
 - 根 crate `rarebox-desktop`：只保留 GPUI 渲染与桌面/Android 平台入口。
   `src/app.rs` 的 `RareBox` 是引擎状态的只读镜像 + 输入框实体；
   `src/app/actions.rs` 把界面动作转成 `rarebox_core::Command`；

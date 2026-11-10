@@ -367,9 +367,37 @@ fn overview_content(
                     div()
                         .flex()
                         .gap(px(20.))
-                        .child(ui::key_value(cx, weak.clone(), "型号", snapshot.model.clone(), false).flex_1())
                         .child(
-                            ui::key_value(cx, weak.clone(), "厂商", snapshot.manufacturer.clone(), false)
+                            ui::key_value(cx, weak.clone(), "型号", snapshot.model.clone(), false)
+                                .flex_1(),
+                        )
+                        .child(
+                            ui::key_value(
+                                cx,
+                                weak.clone(),
+                                "厂商",
+                                snapshot.manufacturer.clone(),
+                                false,
+                            )
+                            .flex_1(),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(20.))
+                        .child(
+                            ui::key_value(
+                                cx,
+                                weak.clone(),
+                                "Android",
+                                snapshot.android.clone(),
+                                false,
+                            )
+                            .flex_1(),
+                        )
+                        .child(
+                            ui::key_value(cx, weak.clone(), "SDK", snapshot.sdk.clone(), true)
                                 .flex_1(),
                         ),
                 )
@@ -378,26 +406,34 @@ fn overview_content(
                         .flex()
                         .gap(px(20.))
                         .child(
-                            ui::key_value(cx, weak.clone(), "Android", snapshot.android.clone(), false).flex_1(),
-                        )
-                        .child(ui::key_value(cx, weak.clone(), "SDK", snapshot.sdk.clone(), true).flex_1()),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap(px(20.))
-                        .child(
-                            ui::key_value(cx, weak.clone(), "Build ID", snapshot.build_id.clone(), true).flex_1(),
+                            ui::key_value(
+                                cx,
+                                weak.clone(),
+                                "Build ID",
+                                snapshot.build_id.clone(),
+                                true,
+                            )
+                            .flex_1(),
                         )
                         .child(
-                            ui::key_value(cx, weak.clone(), "安全补丁", snapshot.patch.clone(), true).flex_1(),
+                            ui::key_value(
+                                cx,
+                                weak.clone(),
+                                "安全补丁",
+                                snapshot.patch.clone(),
+                                true,
+                            )
+                            .flex_1(),
                         ),
                 )
                 .child(
                     div()
                         .flex()
                         .gap(px(20.))
-                        .child(ui::key_value(cx, weak.clone(), "ABI", snapshot.abi.clone(), true).flex_1())
+                        .child(
+                            ui::key_value(cx, weak.clone(), "ABI", snapshot.abi.clone(), true)
+                                .flex_1(),
+                        )
                         .child(
                             ui::key_value(
                                 cx,
@@ -454,12 +490,24 @@ fn overview_content(
                         .flex()
                         .gap(px(20.))
                         .child(
-                            ui::key_value(cx, weak.clone(), "分辨率", snapshot.display.size().to_string(), true)
-                                .flex_1(),
+                            ui::key_value(
+                                cx,
+                                weak.clone(),
+                                "分辨率",
+                                snapshot.display.size().to_string(),
+                                true,
+                            )
+                            .flex_1(),
                         )
                         .child(
-                            ui::key_value(cx, weak.clone(), "DPI", snapshot.display.density().to_string(), true)
-                                .flex_1(),
+                            ui::key_value(
+                                cx,
+                                weak.clone(),
+                                "DPI",
+                                snapshot.display.density().to_string(),
+                                true,
+                            )
+                            .flex_1(),
                         ),
                 )
                 .child(
@@ -695,7 +743,7 @@ fn overview_content(
                         snapshot.serial.clone(),
                     )
                     .child(format!("序列号 {}", snapshot.serial)),
-                )
+                ),
         )
 }
 

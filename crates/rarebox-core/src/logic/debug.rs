@@ -267,7 +267,9 @@ mod tests {
     #[test]
     fn ime_display_uses_class_name() {
         assert_eq!(
-            ime_display("com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME"),
+            ime_display(
+                "com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME"
+            ),
             "LatinIME"
         );
         assert_eq!(

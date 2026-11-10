@@ -21,7 +21,10 @@ const ADB_VERSION: &str = "35.0.2";
 /// 需要随 `adb.exe` 一起写出的文件：主程序在前，DLL 紧跟。
 #[cfg(windows)]
 const BUNDLED_FILES: &[(&str, &[u8])] = &[
-    ("adb.exe", include_bytes!("../../../vendor/adb/windows/adb.exe")),
+    (
+        "adb.exe",
+        include_bytes!("../../../vendor/adb/windows/adb.exe"),
+    ),
     (
         "AdbWinApi.dll",
         include_bytes!("../../../vendor/adb/windows/AdbWinApi.dll"),

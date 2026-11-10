@@ -59,10 +59,7 @@ impl Core {
         self.state.hdc_input.clear();
         self.state.config.hdc_path.clear();
         self.save_config();
-        cx.toast(
-            ToastKind::Info,
-            "正在自动检测 hdc（优先使用内置版本）…",
-        );
+        cx.toast(ToastKind::Info, "正在自动检测 hdc（优先使用内置版本）…");
         self.refresh_hdc(cx);
     }
 

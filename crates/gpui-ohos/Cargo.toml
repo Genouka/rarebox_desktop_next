@@ -1,0 +1,42 @@
+[package]
+name = "gpui-ohos"
+version = "0.1.0"
+edition = "2024"
+description = "GPUI 的 HarmonyOS (OpenHarmony) 平台后端：EGL/GLES 渲染 + XComponent 输入 + Node-API 宿主"
+license = "AGPL-3.0-only"
+publish = false
+
+[lib]
+name = "gpui_ohos"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# GPUI 本体与其 wgpu 渲染器。默认特性会拉 wayland/x11/font-kit/windows-manifest，
+# OHOS 一个都不需要（而且 linux 分支的 wayland/x11 在 target_env=ohos 上不可用）。
+gpui = { package = "gpui-pre", version = "=0.3.6", default-features = false }
+gpui_wgpu = { package = "gpui-pre-wgpu", version = "=0.3.6" }
+wgpu = "29.0.4"
+raw-window-handle = "0.6"
+parking_lot = "0.12"
+futures = "0.3"
+anyhow = "1"
+log = "0.4"
+# `start(optionsJson)` / `touch(eventJson)` 等 NAPI 入口用 JSON，与
+# `crates/rarebox-ohos` 的事件协议保持同一种表达方式。
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# `PlatformDisplay::uuid` 的返回类型来自 uuid crate；这里只用到无特性的
+# `from_u128`，因此不需要 v4/v5 之类特性。
+uuid = "1"
+
+# Node-API 绑定只在 OHOS 上启用。桌面/Android/iOS 构建本 crate 时得到空库，
+# 纯逻辑（键盘码表、字体选择、dispatcher、帧步进、vp↔px）仍然可在宿主上单测。
+# `napi4` 是 ThreadsafeFunction（NAPI → ArkTS 事件回调）所需的最低 Node-API 版本。
+[target.'cfg(target_env = "ohos")'.dependencies]
+napi-ohos = { version = "1", default-features = false, features = ["napi4"] }
+napi-derive-ohos = "1"
+
+# build.rs 运行在宿主上，目标三元组只能通过 CARGO_CFG_TARGET_ENV 判断，
+# 因此 napi-build 不能写成 target 限定的 build-dependencies。
+[build-dependencies]
+napi-build-ohos = "1"

@@ -81,44 +81,37 @@ impl RareBox {
             cx.listener(|app, _, _, cx| app.open_ime_settings(cx)),
         );
 
-        let mut card = Card::new()
-            .outlined()
-            .p(px(20.))
-            .child(ui::section_header(
-                cx,
-                "输入法",
-                Some("通过 ime 命令启用、停用或切换当前输入法"),
-                Some(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .child(open_settings)
-                        .child(refresh)
-                        .into_any_element(),
-                ),
-            ));
+        let mut card = Card::new().outlined().p(px(20.)).child(ui::section_header(
+            cx,
+            "输入法",
+            Some("通过 ime 命令启用、停用或切换当前输入法"),
+            Some(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(open_settings)
+                    .child(refresh)
+                    .into_any_element(),
+            ),
+        ));
 
         if !loaded {
-            card = card.child(
-                div().mt(px(14.)).child(ui::empty_block(
-                    cx,
-                    "keyboard",
-                    "还没有读取输入法",
-                    "点击右上角刷新按钮，从设备读取已安装的输入法。",
-                    None,
-                )),
-            );
+            card = card.child(div().mt(px(14.)).child(ui::empty_block(
+                cx,
+                "keyboard",
+                "还没有读取输入法",
+                "点击右上角刷新按钮，从设备读取已安装的输入法。",
+                None,
+            )));
         } else if imes.is_empty() {
-            card = card.child(
-                div().mt(px(14.)).child(ui::empty_block(
-                    cx,
-                    "keyboard",
-                    "设备上没有可用输入法",
-                    "系统可能需要先安装或启用一个键盘应用。",
-                    None,
-                )),
-            );
+            card = card.child(div().mt(px(14.)).child(ui::empty_block(
+                cx,
+                "keyboard",
+                "设备上没有可用输入法",
+                "系统可能需要先安装或启用一个键盘应用。",
+                None,
+            )));
         } else {
             let mut sorted: Vec<&InputMethod> = imes.iter().collect();
             sorted.sort_by_key(|ime| (!ime.active, !ime.enabled, ime.label.clone()));
@@ -150,8 +143,8 @@ impl RareBox {
         let colors = *cx.theme().colors();
         let weak = cx.entity().downgrade();
         let package = self.appops_package.trim().to_string();
-        let loaded = !package.is_empty()
-            && self.appops_loaded_for.as_deref() == Some(package.as_str());
+        let loaded =
+            !package.is_empty() && self.appops_loaded_for.as_deref() == Some(package.as_str());
         let ops = self.appops_ops.clone();
 
         let read = ui::action_button(
@@ -258,14 +251,7 @@ impl RareBox {
                     .iter()
                     .enumerate()
                     .map(|(index, op)| {
-                        appop_row(
-                            cx,
-                            index,
-                            op,
-                            total,
-                            package.clone(),
-                            weak.clone(),
-                        )
+                        appop_row(cx, index, op, total, package.clone(), weak.clone())
                     })
                     .collect();
                 card = card.child(
@@ -345,23 +331,21 @@ impl RareBox {
                          ACTIVATE_VPN。名称区分大小写。",
                     ),
             )
-            .child(
-                if cfg!(any(target_os = "android", target_os = "ios")) {
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .child(self.appops_op_field.clone())
-                        .child(div().flex().items_center().gap(px(8.)).child(apply))
-                } else {
-                    div()
-                        .flex()
-                        .items_end()
-                        .gap(px(10.))
-                        .child(div().flex_1().child(self.appops_op_field.clone()))
-                        .child(apply)
-                },
-            )
+            .child(if cfg!(any(target_os = "android", target_os = "ios")) {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(self.appops_op_field.clone())
+                    .child(div().flex().items_center().gap(px(8.)).child(apply))
+            } else {
+                div()
+                    .flex()
+                    .items_end()
+                    .gap(px(10.))
+                    .child(div().flex_1().child(self.appops_op_field.clone()))
+                    .child(apply)
+            })
             .child(div().flex().flex_wrap().gap(px(6.)).children(chips))
     }
 }
@@ -394,8 +378,8 @@ fn ime_row(
             ActionKind::Filled,
             true,
             move |_, _, cx| {
-                if let Err(err) = activate_weak
-                    .update(cx, |app, cx| app.activate_ime(activate_id.clone(), cx))
+                if let Err(err) =
+                    activate_weak.update(cx, |app, cx| app.activate_ime(activate_id.clone(), cx))
                 {
                     eprintln!("RareBox Desktop: 激活输入法失败: {err}");
                 }
@@ -541,7 +525,6 @@ fn appop_row(
     let (background, foreground) = appop_mode_tag_colors(cx, op.mode);
     let name = op.name.clone();
 
-
     let mut menu_button = div()
         .id(("appop-more", index))
         .h(px(32.))
@@ -647,11 +630,9 @@ fn build_appop_menu(
                     AppOpMode::Default => "restart_alt",
                 }))
                 .on_click(move |_, cx| {
-                    if let Err(err) = weak
-                        .update(cx, |app, cx| {
-                            app.set_app_op(package.clone(), op.clone(), mode, cx)
-                        })
-                    {
+                    if let Err(err) = weak.update(cx, |app, cx| {
+                        app.set_app_op(package.clone(), op.clone(), mode, cx)
+                    }) {
                         eprintln!("RareBox Desktop: 设置 AppOps 失败: {err}");
                     }
                 }),
