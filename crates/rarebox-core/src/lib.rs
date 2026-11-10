@@ -22,6 +22,7 @@ pub mod guide;
 pub mod hdc;
 pub mod hdc_bundle;
 pub mod install;
+pub mod legal;
 pub mod scrcpy;
 pub mod platform;
 pub mod signing;
