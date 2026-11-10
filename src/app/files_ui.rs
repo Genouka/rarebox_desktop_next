@@ -13,6 +13,9 @@ use material3_gpui::icon::{Icon, IconName};
 use material3_gpui::prelude::*;
 use material3_gpui::theme::ActiveTheme;
 
+use super::guide_ui::guide_anchor;
+use rarebox_core::guide::GuideTarget;
+
 impl RareBox {
     pub(crate) fn render_files(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if self.is_harmony() {
@@ -66,14 +69,18 @@ impl RareBox {
                 app.navigate_files(path, cx);
             }),
         );
-        let push = ui::action_button(
-            cx,
-            "files-push",
-            "上传文件",
-            Some("upload"),
-            ActionKind::Filled,
-            true,
-            cx.listener(|app, _, _, cx| app.pick_and_push(cx)),
+        let push_anchor = self.guide.anchors.handle(GuideTarget::FilesUpload);
+        let push = guide_anchor(
+            &push_anchor,
+            ui::action_button(
+                cx,
+                "files-push",
+                "上传文件",
+                Some("upload"),
+                ActionKind::Filled,
+                true,
+                cx.listener(|app, _, _, cx| app.pick_and_push(cx)),
+            ),
         );
         let mobile = cfg!(any(target_os = "android", target_os = "ios"));
 
@@ -199,6 +206,8 @@ impl RareBox {
                 )
                 .child(div().flex().flex_col().children(rows))
         };
+
+        let list = guide_anchor(&self.guide.anchors.handle(GuideTarget::FilesList), list);
 
         let export = self.last_export.clone().map(|path| {
             let open_path = path.clone();

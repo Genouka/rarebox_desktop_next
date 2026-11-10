@@ -18,7 +18,12 @@ pub const MONO_FONT: &str = "Menlo";
 pub const MONO_FONT: &str = "Droid Sans Mono";
 #[cfg(target_os = "ios")]
 pub const MONO_FONT: &str = "Menlo";
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android")))]
+#[cfg(not(any(
+    target_os = "windows",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "android"
+)))]
 pub const MONO_FONT: &str = "DejaVu Sans Mono";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,6 +43,25 @@ pub fn action_button(
     icon: Option<&'static str>,
     kind: ActionKind,
     enabled: bool,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    action_button_sized(cx, id, label, icon, kind, enabled, 40., 13., 17., on_click)
+}
+
+/// 与 [`action_button`] 相同，但允许指定高度、文字与图标尺寸。
+///
+/// 快速指引里的按钮需要比常规工具栏更大，便于不看小字的用户点按。
+#[allow(clippy::too_many_arguments)]
+pub fn action_button_sized(
+    cx: &App,
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: Option<&'static str>,
+    kind: ActionKind,
+    enabled: bool,
+    height: f32,
+    text_size: f32,
+    icon_size: f32,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let colors = *cx.theme().colors();
@@ -62,8 +86,8 @@ pub fn action_button(
 
     let mut button = div()
         .id(id)
-        .h(px(40.))
-        .px(px(16.))
+        .h(px(height))
+        .px(px(if height >= 44. { 18. } else { 16. }))
         .rounded_full()
         .flex_none()
         .flex()
@@ -72,7 +96,7 @@ pub fn action_button(
         .gap(px(8.))
         .bg(background)
         .text_color(foreground)
-        .text_size(px(13.))
+        .text_size(px(text_size))
         .font_weight(FontWeight::MEDIUM)
         .border_1()
         .border_color(if kind == ActionKind::Outlined {
@@ -94,7 +118,7 @@ pub fn action_button(
     if let Some(icon) = icon {
         button = button.child(
             Icon::new(IconName::new(icon))
-                .size(px(17.))
+                .size(px(icon_size))
                 .color(foreground),
         );
     }
@@ -429,9 +453,9 @@ pub fn copyable(
         })
         .on_aux_click(move |_, _, cx| {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.to_string()));
-            if let Err(err) =
-                weak.update(cx, |app, cx| app.toast(cx, ToastKind::Info, format!("已复制：{text}")))
-            {
+            if let Err(err) = weak.update(cx, |app, cx| {
+                app.toast(cx, ToastKind::Info, format!("已复制：{text}"))
+            }) {
                 eprintln!("RareBox Desktop: 复制提示失败: {err}");
             }
         })

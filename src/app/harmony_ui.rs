@@ -9,6 +9,7 @@ use material3_gpui::prelude::*;
 use material3_gpui::theme::ActiveTheme;
 
 use super::HdcInstallReport;
+use super::guide_ui::guide_anchor;
 use super::shell_ui::page_scroll;
 use super::{Confirm, ConfirmKind, Page, RareBox};
 use crate::config::short_path;
@@ -17,6 +18,7 @@ use crate::hdc::{
     HdcTap,
 };
 use crate::ui::{self, ActionKind, MONO_FONT};
+use rarebox_core::guide::GuideTarget;
 
 impl RareBox {
     /// 连接页的 HarmonyOS（hdc）部分：检测状态、设备、网络连接与端口转发。
@@ -165,6 +167,11 @@ impl RareBox {
                     format!("上次检测失败：{error}"),
                 )))
             });
+
+        let header = guide_anchor(
+            &self.guide.anchors.handle(GuideTarget::ConnectHdcCard),
+            header,
+        );
 
         let body: AnyElement = if ready {
             self.render_harmony_connect_cards(cx)
@@ -604,7 +611,11 @@ impl RareBox {
                     .into_any_element(),
                 ),
             ))
-            .child(
+            .child(guide_anchor(
+                &self
+                    .guide
+                    .anchors
+                    .handle(GuideTarget::ConnectDeviceList),
                 div()
                     .mt(px(14.))
                     .flex()
@@ -623,7 +634,8 @@ impl RareBox {
                         let current = selected.as_deref() == Some(device.key.as_str());
                         harmony_device_row(cx, index, device, current, weak.clone())
                     })),
-            );
+            ),
+        );
 
         let network_card = Card::new()
             .outlined()
@@ -1143,14 +1155,17 @@ impl RareBox {
                         true,
                         cx.listener(|app, _, _, cx| app.signing_pick_hap(cx)),
                     ))
-                    .child(ui::action_button(
-                        cx,
-                        "harmony-install",
-                        "安装 HAP",
-                        Some("install_desktop"),
-                        ActionKind::Filled,
-                        true,
-                        cx.listener(|app, _, _, cx| app.pick_and_install_hap(cx)),
+                    .child(guide_anchor(
+                        &self.guide.anchors.handle(GuideTarget::HarmonyAppsInstall),
+                        ui::action_button(
+                            cx,
+                            "harmony-install",
+                            "安装 HAP",
+                            Some("install_desktop"),
+                            ActionKind::Filled,
+                            true,
+                            cx.listener(|app, _, _, cx| app.pick_and_install_hap(cx)),
+                        ),
                     ))
                     .child(ui::icon_button(
                         cx,
@@ -1393,17 +1408,17 @@ fn harmony_info_card(
     let refresh = {
         let weak = weak.clone();
         ui::action_button(
-        cx,
-        "harmony-info-refresh",
-        "刷新",
-        Some("refresh"),
-        ActionKind::Text,
-        true,
-        move |_, _, cx| {
-            if let Err(err) = weak.update(cx, |app, cx| app.load_hdc_snapshot(cx)) {
-                eprintln!("RareBox Desktop: 刷新鸿蒙设备信息失败: {err}");
-            }
-        },
+            cx,
+            "harmony-info-refresh",
+            "刷新",
+            Some("refresh"),
+            ActionKind::Text,
+            true,
+            move |_, _, cx| {
+                if let Err(err) = weak.update(cx, |app, cx| app.load_hdc_snapshot(cx)) {
+                    eprintln!("RareBox Desktop: 刷新鸿蒙设备信息失败: {err}");
+                }
+            },
         )
     };
 

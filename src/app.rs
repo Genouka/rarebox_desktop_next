@@ -10,6 +10,7 @@ mod bridge;
 mod connect_ui;
 mod debug_ui;
 mod files_ui;
+mod guide_ui;
 mod harmony_tools_ui;
 mod harmony_ui;
 mod logs_ui;
@@ -34,23 +35,24 @@ use rarebox_core::adb::{
     AppOp, AppOpMode, AppPackage, Device, DeviceSnapshot, FileEntry, InputMethod, LogLine,
 };
 use rarebox_core::config::Config;
+pub(crate) use rarebox_core::signing::{ImportFile, LoginPhase, SigningUi};
 pub(crate) use rarebox_core::state::{
-    ConfirmKind, CoreState, DeviceKind, HdcInstallReport, HarmonyState, LogFilter, PackageScope,
+    ConfirmKind, CoreState, DeviceKind, HarmonyState, HdcInstallReport, LogFilter, PackageScope,
     RemotePhase, TerminalEntry, ToastKind,
 };
-pub(crate) use rarebox_core::signing::{ImportFile, LoginPhase, SigningUi};
+use rarebox_core::update;
+use rarebox_core::{Command, Engine};
 pub(crate) use rarebox_core::{
     DISPLAY_LIMIT, KEYCODE_APP_SWITCH, KEYCODE_BACK, KEYCODE_HOME, KEYCODE_POWER, ime_display,
     rotation_label,
 };
-use rarebox_core::update;
-use rarebox_core::{Command, Engine};
 
 use crate::theme;
 
 /// 侧边导航中的应用页面。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Page {
+    Guide,
     Overview,
     Connect,
     Apps,
@@ -65,7 +67,8 @@ pub(crate) enum Page {
 }
 
 impl Page {
-    pub(crate) const ALL: [Page; 11] = [
+    pub(crate) const ALL: [Page; 12] = [
+        Page::Guide,
         Page::Overview,
         Page::Connect,
         Page::Apps,
@@ -81,6 +84,7 @@ impl Page {
 
     pub(crate) fn label(self) -> &'static str {
         match self {
+            Page::Guide => "快速指引",
             Page::Overview => "概览",
             Page::Connect => "连接",
             Page::Apps => "应用管理",
@@ -97,6 +101,7 @@ impl Page {
 
     pub(crate) fn icon(self) -> &'static str {
         match self {
+            Page::Guide => "help",
             Page::Overview => "dashboard",
             Page::Connect => "cable",
             Page::Apps => "apps",
@@ -111,9 +116,9 @@ impl Page {
         }
     }
 
-
     pub(crate) fn subtitle(self) -> &'static str {
         match self {
+            Page::Guide => "本地操作百科：说出你想做的事，跟着图文一步步完成",
             Page::Overview => "设备状态、电量与常用快捷操作",
             Page::Connect => "连接 Android 与 HarmonyOS 设备、无线调试与配对",
             Page::Apps => "安装、启动、清理与导出应用（APK / HAP）",
@@ -301,6 +306,7 @@ pub struct RareBox {
     announcements: Option<AnnouncementModal>,
     toasts: Vec<Toast>,
     next_toast: u64,
+    guide: guide_ui::GuideUi,
 }
 
 impl RareBox {
@@ -567,6 +573,33 @@ impl RareBox {
                     .build(cx)
             };
 
+            let guide_query_field = {
+                let change_weak = weak.clone();
+                let submit_weak = weak.clone();
+                TextField::new(
+                    "guide-query",
+                    "描述你想做的事，例如：字太小、装应用、连不上",
+                )
+                .leading_icon(IconName::new("search"))
+                .on_change(move |value, _, cx| {
+                    if let Err(err) = change_weak.update(cx, |app: &mut Self, cx| {
+                        app.guide.query = value.to_string();
+                        cx.notify();
+                    }) {
+                        eprintln!("RareBox Desktop: 更新指引搜索失败: {err}");
+                    }
+                })
+                .on_submit(move |value, _, cx| {
+                    let value = value.to_string();
+                    if let Err(err) =
+                        submit_weak.update(cx, |app: &mut Self, cx| app.guide_ask(value, cx))
+                    {
+                        eprintln!("RareBox Desktop: 发送指引问题失败: {err}");
+                    }
+                })
+                .build(cx)
+            };
+
             let appops_package_field = {
                 let weak = weak.clone();
                 let change_weak = weak.clone();
@@ -830,7 +863,7 @@ impl RareBox {
             Self {
                 core,
                 core_state,
-                page: Page::Overview,
+                page: Page::Guide,
                 device_kind: DeviceKind::Android,
                 config,
                 adb_path: None,
@@ -922,6 +955,7 @@ impl RareBox {
                 pair_code: String::new(),
                 pair_code_field,
                 scroll_handles: std::array::from_fn(|_| ScrollHandle::new()),
+                guide: guide_ui::GuideUi::new(guide_query_field),
                 sidebar_open: false,
                 confirm: None,
                 legal: None,
@@ -948,10 +982,7 @@ impl RareBox {
 
     pub(crate) fn harmony_device(&self) -> Option<&rarebox_core::hdc::HdcDevice> {
         let key = self.harmony.selected.as_deref()?;
-        self.harmony
-            .devices
-            .iter()
-            .find(|device| device.key == key)
+        self.harmony.devices.iter().find(|device| device.key == key)
     }
 
     pub(crate) fn current_device(&self) -> Option<&Device> {
@@ -1063,8 +1094,7 @@ impl RareBox {
 
     /// 用户同意条款：记录已接受版本并持久化，关闭弹窗。
     pub(crate) fn accept_legal(&mut self, cx: &mut Context<Self>) {
-        self.config.accepted_legal_version =
-            Some(rarebox_core::legal::LEGAL_VERSION.to_string());
+        self.config.accepted_legal_version = Some(rarebox_core::legal::LEGAL_VERSION.to_string());
         self.core_command(Command::AcceptLegal);
         self.legal = None;
         cx.notify();
@@ -1118,6 +1148,15 @@ impl RareBox {
         if self.page == page {
             return;
         }
+        // 用户在“高亮导航、等待自动切页”的停顿里自己点了别的页面：
+        // 以用户为准，取消这次自动切换，不要稍后又把界面抢回去。
+        if let Some(session) = self.guide.session.as_mut()
+            && let Some(pending) = session.pending_page
+            && pending != page
+        {
+            session.pending_page = None;
+            session.switch_token = session.switch_token.wrapping_add(1);
+        }
         if self.page == Page::Remote {
             self.stop_remote(cx);
         }
@@ -1130,7 +1169,9 @@ impl RareBox {
     fn load_page_data(&mut self, cx: &mut Context<Self>) {
         if self.is_harmony() {
             match self.page {
-                Page::Apps if self.harmony.packages.is_empty() && self.harmony.selected.is_some() => {
+                Page::Apps
+                    if self.harmony.packages.is_empty() && self.harmony.selected.is_some() =>
+                {
                     self.load_hdc_packages(cx)
                 }
                 Page::Logs if self.harmony.logs.is_empty() && self.harmony.selected.is_some() => {

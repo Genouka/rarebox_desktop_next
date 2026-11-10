@@ -12,6 +12,8 @@ use material3_gpui::icon::{Icon, IconName};
 use material3_gpui::prelude::*;
 use material3_gpui::theme::ActiveTheme;
 
+use super::guide_ui::guide_anchor;
+use rarebox_core::guide::GuideTarget;
 impl RareBox {
     pub(crate) fn render_connect(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if self.is_harmony() {
@@ -43,6 +45,7 @@ impl RareBox {
             content = content.child(guide_card(cx, weak.clone(), adb_ready, adb_error.clone()));
         }
 
+        let device_anchor = self.guide.anchors.handle(GuideTarget::ConnectDeviceList);
         let device_card = Card::new()
             .outlined()
             .p(px(20.))
@@ -67,7 +70,8 @@ impl RareBox {
                     .into_any_element(),
                 ),
             ))
-            .child(
+            .child(guide_anchor(
+                &device_anchor,
                 div()
                     .mt(px(14.))
                     .flex()
@@ -92,8 +96,8 @@ impl RareBox {
                         let weak = weak.clone();
                         device_row(cx, index, device, current, weak, serial)
                     })),
-            );
-
+            ),
+        );
         let pair_button = || {
             ui::action_button(
                 cx,
@@ -105,6 +109,7 @@ impl RareBox {
                 cx.listener(|app, _, _, cx| app.wireless_pair(cx)),
             )
         };
+        let pair_anchor = self.guide.anchors.handle(GuideTarget::ConnectPairCard);
         let wireless = Card::new()
             .outlined()
             .p(px(20.))
@@ -212,7 +217,8 @@ impl RareBox {
                         cx.listener(|app, _, _, cx| app.enable_tcpip(cx)),
                     )),
             )
-            .child(
+            .child(guide_anchor(
+                &pair_anchor,
                 div()
                     .mt(px(16.))
                     .pt(px(16.))
@@ -270,7 +276,7 @@ impl RareBox {
                         "info",
                         "在手表「开发者选项 → 无线调试」中开启配对，输入手表显示的配对地址与六位配对码。配对成功后，用上方连接地址连接。",
                     ))),
-            );
+            ));
 
         let adb = Card::new()
             .outlined()
@@ -338,6 +344,7 @@ impl RareBox {
                 )))
             });
 
+        let driver_anchor = self.guide.anchors.handle(GuideTarget::ConnectDriverCard);
         page_scroll(
             Page::Connect,
             &self.scroll_handles[Page::Connect as usize],
@@ -362,7 +369,9 @@ impl RareBox {
                         ),
                 )
                 .child(wireless)
-                .when(cfg!(windows), |el| el.child(driver_card(cx, weak.clone()))),
+                .when(cfg!(windows), |el| {
+                    el.child(guide_anchor(&driver_anchor, driver_card(cx, weak.clone())))
+                }),
         )
         .into_any_element()
     }
@@ -510,6 +519,24 @@ fn guide_card(
                         move |_, _, cx| {
                             if let Err(err) = weak.update(cx, |app, cx| app.refresh_devices(cx)) {
                                 eprintln!("RareBox Desktop: 重新检测设备失败: {err}");
+                            }
+                        }
+                    },
+                ))
+                .child(ui::action_button(
+                    cx,
+                    "connect-guide-walkthrough",
+                    "图文教程",
+                    Some("help"),
+                    ActionKind::Filled,
+                    true,
+                    {
+                        let weak = weak.clone();
+                        move |_, _, cx| {
+                            if let Err(err) = weak.update(cx, |app, cx| {
+                                app.guide_start("connect_usb", cx);
+                            }) {
+                                eprintln!("RareBox Desktop: 打开连接教程失败: {err}");
                             }
                         }
                     },

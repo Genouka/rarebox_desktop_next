@@ -1,5 +1,6 @@
 //! 窗口骨架渲染（UI 层）：侧栏、顶栏、页面调度、弹窗与 toast。
 
+use super::guide_ui::ui_page_to_guide;
 use super::{DeviceKind, LegalTab, Page, RareBox, ToastKind};
 use crate::adb::Device;
 use crate::update;
@@ -12,6 +13,7 @@ use material3_gpui::icon::{Icon, IconName};
 use material3_gpui::overlay::{MenuItem, MenuState, show_menu};
 use material3_gpui::prelude::*;
 use material3_gpui::theme::ActiveTheme;
+use rarebox_core::guide::GuideTarget;
 use ui::{ActionKind, MONO_FONT};
 
 impl RareBox {
@@ -19,7 +21,12 @@ impl RareBox {
     pub(crate) fn transport_switch(&self, cx: &mut Context<Self>) -> Div {
         let colors = *cx.theme().colors();
         let harmony = self.is_harmony();
+        let anchor = self
+            .guide
+            .anchors
+            .handle(GuideTarget::ConnectTransportSwitch);
         div()
+            .relative()
             .flex()
             .items_center()
             .flex_wrap()
@@ -45,6 +52,7 @@ impl RareBox {
                     .text_color(colors.on_surface_variant)
                     .child("所有页面按当前协议操作设备；仅单方支持的功能会自动隐藏"),
             )
+            .child(anchor.capture_element())
     }
 
     pub(crate) fn render_sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -64,6 +72,11 @@ impl RareBox {
             .map(|page| {
                 let page = *page;
                 let selected = page == current_page;
+                let anchor = (page != Page::Guide).then(|| {
+                    self.guide
+                        .anchors
+                        .handle(GuideTarget::Nav(ui_page_to_guide(page)))
+                });
                 let (background, foreground) = if selected {
                     (colors.secondary_container, colors.on_secondary_container)
                 } else {
@@ -72,6 +85,7 @@ impl RareBox {
                 let hover = colors.surface_container_high;
                 div()
                     .id(("nav-item", page as usize))
+                    .relative()
                     .h(px(42.))
                     .w_full()
                     .px(px(12.))
@@ -109,6 +123,7 @@ impl RareBox {
                                 .bg(colors.on_secondary_container),
                         )
                     })
+                    .when_some(anchor, |el, anchor| el.child(anchor.capture_element()))
                     .on_click(cx.listener(move |app, _, _, cx| app.set_page(page, cx)))
             });
 
@@ -442,8 +457,10 @@ impl RareBox {
                 .unwrap_or("未连接")
         };
 
+        let device_anchor = self.guide.anchors.handle(GuideTarget::TopbarDevice);
         let selector = div()
             .id("device-selector")
+            .relative()
             .h(px(46.))
             .when(!mobile, |el| el.flex_none())
             .when(mobile, |el| el.flex_1().min_w_0())
@@ -522,6 +539,7 @@ impl RareBox {
                         .color(colors.on_surface_variant),
                 )
             })
+            .child(device_anchor.capture_element())
             .on_click(move |event, window, cx| {
                 let mut menu = MenuState::new();
                 let mut item_count = 0;
@@ -779,6 +797,7 @@ impl RareBox {
 
     pub(crate) fn render_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
         match self.page {
+            Page::Guide => self.render_guide(cx),
             Page::Overview => self.render_overview(cx),
             Page::Connect => self.render_connect(cx),
             Page::Apps => self.render_apps(cx),
@@ -1532,6 +1551,7 @@ impl Render for RareBox {
         let sidebar = self.render_sidebar(cx);
         let topbar = self.render_topbar(cx);
         let page = self.render_page(cx);
+        let guide = self.render_guide_overlay(window, cx);
         let toasts = self.render_toasts(cx);
         let dialog = self.render_confirm_dialog(cx);
         let update_dialog = self.render_update_dialog(cx);
@@ -1621,6 +1641,7 @@ impl Render for RareBox {
                     .child(body),
             )
             .child(drawer)
+            .child(guide)
             .child(toasts)
             .child(dialog)
             .child(update_dialog)

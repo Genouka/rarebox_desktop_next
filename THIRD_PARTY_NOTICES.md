@@ -19,6 +19,7 @@ project does not replace those terms.
 | libusb | USB access | LGPL-2.1-or-later | bundled with the Windows/macOS/Android hdc builds |
 | Android SDK adb | Android debugging | Apache-2.0 / Android SDK terms | bundled for Windows and Android |
 | proc-macro-error2 | build-time macro helper | MIT OR Apache-2.0 | [`vendor/proc-macro-error2/`](vendor/proc-macro-error2/) |
+| Tabler Icons | line icons used by the quick-guide page | MIT | [`licenses/tabler-MIT.txt`](licenses/tabler-MIT.txt), [`assets/icons/tabler-*.svg`](assets/icons/) |
 
 Additional license texts are in [`licenses/`](licenses/) and next to each
 vendored component. If you redistribute a binary, keep the relevant notices

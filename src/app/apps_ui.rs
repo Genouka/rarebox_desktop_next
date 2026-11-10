@@ -15,6 +15,9 @@ use material3_gpui::overlay::{MenuItem, MenuState, show_menu};
 use material3_gpui::prelude::*;
 use material3_gpui::theme::ActiveTheme;
 
+use super::guide_ui::guide_anchor;
+use rarebox_core::guide::GuideTarget;
+
 impl RareBox {
     pub(crate) fn render_apps(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if self.is_harmony() {
@@ -88,14 +91,18 @@ impl RareBox {
         let install_options = self.render_install_options(cx);
 
         let metadata_pending = self.package_metadata_for.is_some();
-        let install_button = ui::action_button(
-            cx,
-            "apps-install",
-            "安装 APK",
-            Some("install_desktop"),
-            ActionKind::Filled,
-            true,
-            cx.listener(|app, _, _, cx| app.pick_and_install(cx)),
+        let install_anchor = self.guide.anchors.handle(GuideTarget::AppsInstallButton);
+        let install_button = guide_anchor(
+            &install_anchor,
+            ui::action_button(
+                cx,
+                "apps-install",
+                "安装 APK",
+                Some("install_desktop"),
+                ActionKind::Filled,
+                true,
+                cx.listener(|app, _, _, cx| app.pick_and_install(cx)),
+            ),
         );
         let refresh_button = ui::icon_button(
             cx,
@@ -274,7 +281,13 @@ impl RareBox {
                 .child(reveal)
         });
 
-        let install_panel = self.render_install_panel(cx);
+        let install_panel = self.render_install_panel(cx).map(|panel| {
+            guide_anchor(
+                &self.guide.anchors.handle(GuideTarget::AppsInstallPanel),
+                panel,
+            )
+            .into_any_element()
+        });
 
         page_scroll(
             Page::Apps,
@@ -809,7 +822,9 @@ fn package_row(
                 ),
         )
         .child(launch)
-        .when(!cfg!(any(target_os = "android", target_os = "ios")), |el| el.child(stop))
+        .when(!cfg!(any(target_os = "android", target_os = "ios")), |el| {
+            el.child(stop)
+        })
         .child(more)
 }
 

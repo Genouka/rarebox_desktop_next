@@ -10,9 +10,13 @@ use gpui::{
     AnyElement, App, Context, Div, Entity, FontWeight, IntoElement, ObjectFit, ParentElement,
     Styled, div, img, prelude::*, px,
 };
+
+use super::guide_ui::guide_anchor;
 use material3_gpui::icon::{Icon, IconName};
+use material3_gpui::interaction::BoundsHandle;
 use material3_gpui::prelude::*;
 use material3_gpui::theme::ActiveTheme;
+use rarebox_core::guide::GuideTarget;
 
 impl RareBox {
     pub(crate) fn render_screen(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -204,6 +208,11 @@ impl RareBox {
                 )
             });
 
+        let preview_card = guide_anchor(
+            &self.guide.anchors.handle(GuideTarget::ScreenScreenshot),
+            preview_card,
+        );
+
         let keys = Card::new()
             .outlined()
             .p(px(20.))
@@ -331,6 +340,9 @@ impl RareBox {
             weak.clone(),
             self.screen_size_field.clone(),
             self.screen_density_field.clone(),
+            self.guide.anchors.handle(GuideTarget::ScreenDensityRow),
+            self.guide.anchors.handle(GuideTarget::ScreenApplyDensity),
+            self.guide.anchors.handle(GuideTarget::ScreenResetDensity),
         );
 
         let left = div()
@@ -506,6 +518,9 @@ fn controls_card(
     weak: gpui::WeakEntity<RareBox>,
     size_field: Entity<TextFieldState>,
     density_field: Entity<TextFieldState>,
+    density_anchor: BoundsHandle,
+    apply_anchor: BoundsHandle,
+    reset_anchor: BoundsHandle,
 ) -> Card {
     let colors = *cx.theme().colors();
     let rotation = snapshot.display.rotation;
@@ -583,50 +598,57 @@ fn controls_card(
                             },
                         )),
                 )
-                .child(
+                .child(guide_anchor(
+                    &density_anchor,
                     div()
                         .flex()
                         .items_end()
                         .gap(px(10.))
                         .child(div().flex_1().min_w(px(0.)).child(density_field))
-                        .child(ui::action_button(
-                            cx,
-                            "display-apply-density",
-                            "应用",
-                            Some("check"),
-                            ActionKind::Filled,
-                            true,
-                            {
-                                let weak = weak.clone();
-                                move |_, _, cx| {
-                                    if let Err(err) =
-                                        weak.update(cx, |app, cx| app.apply_density(cx))
-                                    {
-                                        eprintln!("RareBox Desktop: 应用 DPI 失败: {err}");
+                        .child(guide_anchor(
+                            &apply_anchor,
+                            ui::action_button(
+                                cx,
+                                "display-apply-density",
+                                "应用",
+                                Some("check"),
+                                ActionKind::Filled,
+                                true,
+                                {
+                                    let weak = weak.clone();
+                                    move |_, _, cx| {
+                                        if let Err(err) =
+                                            weak.update(cx, |app, cx| app.apply_density(cx))
+                                        {
+                                            eprintln!("RareBox Desktop: 应用 DPI 失败: {err}");
+                                        }
                                     }
-                                }
-                            },
+                                },
+                            ),
                         ))
-                        .child(ui::action_button(
-                            cx,
-                            "display-reset-density",
-                            "恢复物理值",
-                            Some("restart_alt"),
-                            ActionKind::Outlined,
-                            true,
-                            {
-                                let weak = weak.clone();
-                                move |_, _, cx| {
-                                    if let Err(err) =
-                                        weak.update(cx, |app, cx| app.reset_density(cx))
-                                    {
-                                        eprintln!("RareBox Desktop: 重置 DPI 失败: {err}");
+                        .child(guide_anchor(
+                            &reset_anchor,
+                            ui::action_button(
+                                cx,
+                                "display-reset-density",
+                                "恢复物理值",
+                                Some("restart_alt"),
+                                ActionKind::Outlined,
+                                true,
+                                {
+                                    let weak = weak.clone();
+                                    move |_, _, cx| {
+                                        if let Err(err) =
+                                            weak.update(cx, |app, cx| app.reset_density(cx))
+                                        {
+                                            eprintln!("RareBox Desktop: 重置 DPI 失败: {err}");
+                                        }
                                     }
-                                }
-                            },
+                                },
+                            ),
                         )),
-                ),
-        )
+                ))
+            )
         .child(
             div()
                 .mt(px(16.))

@@ -1,7 +1,7 @@
 //! remote 页面渲染（UI 层）：只读状态并绑定交互，不直接执行命令。
 
-use super::{KEYCODE_APP_SWITCH, KEYCODE_BACK, KEYCODE_HOME, KEYCODE_POWER};
 use super::shell_ui::{device_required, page_scroll};
+use super::{KEYCODE_APP_SWITCH, KEYCODE_BACK, KEYCODE_HOME, KEYCODE_POWER};
 use super::{Page, RareBox, RemotePhase};
 use crate::ui::{self, ActionKind};
 use gpui::{
@@ -10,6 +10,9 @@ use gpui::{
 };
 use material3_gpui::prelude::*;
 use material3_gpui::theme::ActiveTheme;
+
+use super::guide_ui::guide_anchor;
+use rarebox_core::guide::GuideTarget;
 
 impl RareBox {
     pub(crate) fn render_remote(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -429,6 +432,11 @@ impl RareBox {
                         .child(viewport)
                         .child(side_panel),
                 ),
+        );
+
+        let content = guide_anchor(
+            &self.guide.anchors.handle(GuideTarget::RemoteStart),
+            content,
         );
 
         page_scroll(

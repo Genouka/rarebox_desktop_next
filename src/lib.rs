@@ -5,10 +5,11 @@
 
 #[cfg(target_os = "android")]
 mod android;
+mod app;
 #[cfg(target_os = "ios")]
 mod ios;
-mod app;
 mod assets;
+mod guide_art;
 mod theme;
 mod titlebar;
 mod ui;

@@ -14,6 +14,9 @@ use material3_gpui::icon::{Icon, IconName};
 use material3_gpui::prelude::*;
 use material3_gpui::theme::ActiveTheme;
 
+use super::guide_ui::guide_anchor;
+use rarebox_core::guide::GuideTarget;
+
 impl RareBox {
     pub(crate) fn render_settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let colors = *cx.theme().colors();
@@ -516,6 +519,19 @@ impl RareBox {
                         "所有操作都直接调用 ADB 完成，不包含演示数据。设备需要开启 USB 调试并授权本机。",
                     )),
             );
+
+        let adb_card = guide_anchor(
+            &self.guide.anchors.handle(GuideTarget::SettingsAdbPath),
+            adb_card,
+        );
+        let media_card = guide_anchor(
+            &self.guide.anchors.handle(GuideTarget::SettingsSaveDir),
+            media_card,
+        );
+        let process_card = guide_anchor(
+            &self.guide.anchors.handle(GuideTarget::SettingsKillServer),
+            process_card,
+        );
 
         page_scroll(
             Page::Settings,
