@@ -41,7 +41,9 @@ DEVECO_HOME_DEFAULT_WIN='C:\Program Files\Huawei\DevEco Studio'
 
 if [[ -n "$cli_home" ]]; then
     cli_home="${cli_home%/}"
-    for path in "$cli_home/bin/hvigorw" "$cli_home/bin/hvigorw.bat" \
+    # Windows 的 CLI tools 才有 hvigorw.bat；Linux 只有 hvigorw 脚本，
+    # 因此 .bat 不在必检清单里，存在时在下方优先选用。
+    for path in "$cli_home/bin/hvigorw" \
         "$cli_home/tool/node/bin" "$cli_home/sdk"; do
         if [[ ! -e "$path" ]]; then
             echo "缺少 CLI tools 组件：$path" >&2
