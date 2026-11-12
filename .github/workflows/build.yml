@@ -1,13 +1,17 @@
 name: Build
 
 # 所有平台构建集中在一个工作流里，并按宿主系统合并原本独立的工作流：
-#   linux   = Linux 桌面 + Android APK + 浏览器版 + hdc(linux/android)
-#   windows = Windows 桌面 + hdc(windows)
-#   macos   = macOS 桌面 + iOS + hdc(macos)
+#   linux     = Linux 桌面 + Android APK + 浏览器版 + hdc(linux/android)
+#   windows   = Windows 桌面 + hdc(windows)
+#   macos     = macOS 桌面 + iOS + hdc(macos)
+#   web-pages = 浏览器版静态站点发布到 GitHub Pages（依赖 linux 的产物）
 #
 # Windows 构建依赖 MSVC/NASM，macOS/iOS 依赖 Apple SDK/Xcode；两者都无法在 Linux
-# 上可靠交叉编译，因此 3 个 job 是最小机器数。每个 job 内部共享 checkout、Rust
+# 上可靠交叉编译，因此 3 个构建 job 是最小机器数。每个 job 内部共享 checkout、Rust
 # 工具链、缓存和系统依赖，避免以前每个目标重复启动 runner。
+#
+# GitHub Pages 需要一次性设置：仓库 Settings → Pages → Source 选择
+# "GitHub Actions"。WebUSB 依赖安全上下文，Pages 提供的 HTTPS 满足该要求。
 #
 # DCO（PR 专用检查）与 HarmonyOS（独立 2 GB SDK、里程碑不同）保持独立工作流。
 
@@ -133,6 +137,44 @@ jobs:
           name: rarebox-web
           path: dist/web
           if-no-files-found: error
+
+  # 浏览器版发布：直接复用 linux job 的 rarebox-web 产物，不重复编译。
+  # 只在主分支推送或手动触发时部署；tag 推送只产出 release 产物，不覆盖线上站点。
+  web-pages:
+    name: Deploy Web (GitHub Pages)
+    needs: linux
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/master'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    # 部署中途被取消会让站点停在半发布状态，这里排队而不取消。
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: rarebox-web
+          path: dist/web
+
+      # dist/web 内全部是相对路径引用，可直接在项目子路径下工作。
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist/web
+
+      - id: deploy
+        uses: actions/deploy-pages@v5
 
   windows:
     name: Windows
