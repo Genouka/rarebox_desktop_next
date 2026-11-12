@@ -58,7 +58,7 @@ pub struct ScrcpySession {
 
 impl ScrcpySession {
     /// 连接设备、上传 server 并启动投屏。
-    pub fn start(adb: PathBuf, serial: String, max_size: u32) -> Result<Self> {
+    pub fn start(adb: PathBuf, serial: String, max_size: u32, bitrate: u32) -> Result<Self> {
         let scid = random_scid();
         let socket_name = format!("scrcpy_{scid:08x}");
         let local_jar = write_server_jar()?;
@@ -101,7 +101,7 @@ impl ScrcpySession {
         let server_args = format!(
             "CLASSPATH={SERVER_REMOTE_PATH} app_process / com.genymobile.scrcpy.Server {} \
              log_level=warn scid={scid:08x} tunnel_forward=true audio=false control=true \
-             video_codec=h264 send_device_meta=false max_size={max_size} video_bit_rate=8000000",
+             video_codec=h264 send_device_meta=false max_size={max_size} video_bit_rate={bitrate}",
             fadb_scrcpy::server::SCRCPY_VERSION
         );
         let mut server = adb_command(&adb, &serial);
@@ -511,7 +511,8 @@ mod tests {
             .map(PathBuf::from)
             .expect("RAREBOX_ADB");
         let serial = std::env::var("RAREBOX_SERIAL").expect("RAREBOX_SERIAL");
-        let mut session = ScrcpySession::start(adb, serial, 1024).expect("start scrcpy");
+        let mut session =
+            ScrcpySession::start(adb, serial, 1024, 8_000_000).expect("start scrcpy");
         println!("session started: {}x{}", session.width(), session.height());
         let deadline = Instant::now() + Duration::from_secs(15);
         while Instant::now() < deadline {

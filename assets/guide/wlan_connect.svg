@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="240" viewBox="0 0 480 240">
+  <g fill="none" stroke="black" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 路由器 -->
+    <rect x="36" y="132" width="96" height="52" rx="10"/>
+    <path d="M60 132 V118 M108 132 V118"/>
+    <circle cx="84" cy="158" r="6" fill="black"/>
+    <path d="M64 158 H 74 M94 158 H 104"/>
+    <!-- Wi-Fi 波纹 -->
+    <path d="M54 104 C 74 84, 94 84, 114 104"/>
+    <path d="M66 118 C 78 106, 90 106, 102 118"/>
+    <circle cx="84" cy="132" r="4" fill="black"/>
+    <!-- 箭头 -->
+    <path d="M150 158 C 178 158, 188 128, 216 128"/>
+    <path d="M208 120 L 218 128 L 208 136"/>
+    <!-- 手表 -->
+    <rect x="234" y="56" width="116" height="148" rx="24"/>
+    <rect x="248" y="84" width="88" height="66" rx="10" fill="black" opacity=".08"/>
+    <path d="M250 56 L334 56 L326 40 L258 40 Z"/>
+    <path d="M250 204 L334 204 L326 220 L258 220 Z"/>
+    <!-- 屏幕上的地址 -->
+    <rect x="256" y="96" width="72" height="20" rx="8" fill="black" opacity=".12"/>
+    <rect x="256" y="124" width="72" height="18" rx="6" fill="black" opacity=".08"/>
+    <!-- 已连接勾 -->
+    <circle cx="300" cy="168" r="18"/>
+    <path d="M290 168 L 298 176 L 312 158"/>
+    <!-- 地址标签 -->
+    <rect x="366" y="92" width="86" height="34" rx="10"/>
+    <text x="380" y="116" font-family="monospace" font-size="17" fill="black" stroke="none">IP:5555</text>
+  </g>
+</svg>

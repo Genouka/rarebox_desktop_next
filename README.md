@@ -6,8 +6,10 @@ RareBox Desktop 是一个面向 Android / Wear OS 与 HarmonyOS 设备的桌面�
 
 - **概览**：设备型号、系统版本、电量、存储、内存、运行时间、电源与重启入口。
 - **快速指引（启动默认页）**：本地图文操作百科，打开 RareBox 即进入。没有设备时首屏只显示「先连接设备」引导，隐藏安装 / DPI / 截图等色块；从其他教程进入会先插入连接教程，连接完成后自动继续原教程。连接后顶部用大号 Tabler 图标 + 主题色块给出主要功能入口（连接设备、安装应用、调整显示、截图录屏、传文件、远程投屏、连不上排查、Windows USB 驱动），点色块直接进入对应手把手教程；页面对话框对内置教程做确定性检索（不联网、不调模型）。向导用遮罩挖洞高亮真实控件，只允许操作当前步骤，带步骤计数、可勾选清单、「我在这里卡住了」排查与「中断教程」。切页前会先高亮侧栏并停顿再自动切换。
-- **连接方式选择**：连接教程不默认 USB，而是先让用户判断手表是否支持「无线调试 / WLAN 调试」，再选择 USB 或无线。无线流程包含配对方式（二维码 / 配对码）、手动输入配对地址与六位码、手动输入连接地址；桌面端不读取摄像头二维码，会明确提示改用配对码或 USB。设备列表只高亮可点击的行，教程卡片自动避开高亮区域。
-- **连接**：设备列表与切换、USB 首次连接引导、无线调试与配对、TCP/IP 开关。没有任何设备时自动进入该页引导连接。
+- **自动识别系统**：顶栏默认「自动」——同时探测 ADB 与 hdc，哪边有在线设备就用哪边工作区；用户不需要分清 Android 和 HarmonyOS。手动锁定仍保留，便于排障。
+- **能力矩阵连接页**：连上手表后读取 `adb_wifi_enabled`、`adb_enabled`、`service.adb.tcp.port`、`pm list features` 与 `/sys/class/udc`，把「无线调试（TLS 配对）/ WLAN 调试（旧版 5555）/ USB 调试」三张图块标成「已开启 / 支持未开启 / 不支持（附原因）/ 未检测」，并给可行方式打「推荐」。读不到只显示「未检测」，不做无依据的否定。
+- **一个框连接 + 盲扫**：地址框自动依次尝试 `adb connect` 与 `hdc tconn`；端口没填时试 5555 / 8710。失败会按原因（端口错 / 不可达 / 需配对）给修复入口。「找不到手表？」面板可扫本机 /24 网段的常见调试端口，结果按 `adb` / `hdc` 协议校验后才标成可连接；支持邻端口与单机全端口深度扫描，可取消。
+- **更少文字**：连接页以图块和状态点为主，手动配对与 USB 驱动默认收起；连接类教程改成「一张线稿 + 一句话 + 可勾选清单」，并按手表能力自动进入对应教程。
 - **HarmonyOS（hdc）**：不单独占页，与 Android 共用连接、概览、应用、文件、终端、日志与屏幕页面。在「连接」页或顶栏设备菜单切换到「HarmonyOS（hdc）」后，通过 hdc（HarmonyOS Device Connector，不依赖 adb）操作 HarmonyOS / OpenHarmony 设备——设备列表与在线状态、`hdc tconn` / `tmode` 无线连接、端口转发（`fport` / `rport`）、设备信息（型号、系统版本、API、屏幕、电池温度、Wi-Fi、存储与内存）、HAP/HSP/APP 逐包安装、应用列表 / 详情 / 启停 / 清缓存 / 清数据 / 卸载、文件传输、HDC shell 终端、HiLog 级别与标签过滤及导出、截图与 UI 控制（`uitest`、深链）、重启 / 关机，以及 hdc 服务重启。仅单方支持的控件（如 Android 的 APK 导出、录屏、远程控制）会在另一套工作区隐藏。
 - **HarmonyOS 签名与安装**：在 HarmonyOS 工作区新增「签名与安装」页。自动模式登录华为开发者账号后，在本地生成 P-256 密钥/CSR、向 AGC 申请调试证书、注册设备、按 bundle + 设备 + ACL 申请调试 Profile，并用纯 Rust 签名 HAP/HSP 后通过 hdc 安装；发布或自定义材料使用「导入材料」模式。签名块默认 V3，可切换 V2；不需要 Java 或 DevEco Studio。
 - **应用管理**：浏览用户/系统应用，列表显示应用名称、包名、版本与系统/用户标记，支持搜索、启动、停止、卸载、导出 APK。
@@ -123,6 +125,15 @@ Android 端说明：
 - 重新抓取/更新内置 adb 及其依赖库：`./script/fetch_android_tools.sh`（需要 curl、python3 与 NDK 的 `llvm-readelf`；可用 `RAREBOX_ANDROID_ABIS`、`RAREBOX_TERMUX_MIRROR` 覆盖）。
 - 手机/平板上侧栏改为抽屉（左上角菜单按钮），标题栏压缩为一行，并自动避让状态栏与导航栏。
 - 应用内部存储路径为 `files/config.json`，截图、录屏与导出文件位于 `Android/data/com.rarebox.desktop/files/`。
+
+### 手表端 App（`wear/`）
+
+`wear/` 是独立的 Wear OS 客户端（Compose for Wear Material 3），与本仓库的 Rust 内核通过 `rarebox-ffi` 通信。
+
+- **页面结构**：首页是图标 Hub（连接 / 概览 / 应用 / 文件 + 「更多」），连接拆成「连接 Hub → 无线调试 / 配对码 / WLAN / USB / 扫描 / 设备列表」子页；屏幕、设置同样拆成子页，避免单页堆叠功能。
+- **列表与动效**：所有列表页使用 `ScreenScaffold` + `TransformingLazyColumn`，条目带 `transformedHeight`/`SurfaceTransformation` 的弯曲与缩放过渡，使用 M3 默认边缘回弹与滚动指示器；按钮、卡片、图标按钮统一使用 M3 组件（自带涟漪）。
+- **图标**：功能入口使用 Tabler 线稿图标，由 `script/gen_wear_icons.py` 从 `tabler/tabler-icons` 的 outline SVG 生成 `res/drawable/ic_*.xml`（新增图标时改脚本里的 `ICONS` 表后重跑）。纯图标按钮长按显示名称 tooltip，并带无障碍 `contentDescription`。
+- **连接能力**：连接 Hub 读取内核返回的 `support`（无线调试 / WLAN / USB 的支持与开关状态）并标注推荐项；「配对码」页自带数字键盘，配对地址可由 mDNS 自动填充；「扫描」页调用内核的盲扫命令。
 
 ### Windows / Linux
 

@@ -1,7 +1,7 @@
 //! 窗口骨架渲染（UI 层）：侧栏、顶栏、页面调度、弹窗与 toast。
 
 use super::guide_ui::ui_page_to_guide;
-use super::{DeviceKind, LegalTab, Page, RareBox, ToastKind};
+use super::{KindMode, LegalTab, Page, RareBox, ToastKind};
 use crate::adb::Device;
 use crate::update;
 use crate::{theme, titlebar, ui};
@@ -17,10 +17,13 @@ use rarebox_core::guide::GuideTarget;
 use ui::{ActionKind, MONO_FONT};
 
 impl RareBox {
-    /// Android / HarmonyOS 工作区切换。连接页与共享页面用它决定操作哪套设备。
+    /// 协议选择：自动识别（推荐）/ Android / HarmonyOS。
+    ///
+    /// 用户通常分不清手表跑的是哪个系统，默认自动：哪边探测到在线设备就用哪边。
     pub(crate) fn transport_switch(&self, cx: &mut Context<Self>) -> Div {
-        let colors = *cx.theme().colors();
         let harmony = self.is_harmony();
+        let mode = self.kind_mode;
+        let resolved = if harmony { "HarmonyOS" } else { "Android" };
         let anchor = self
             .guide
             .anchors
@@ -33,25 +36,25 @@ impl RareBox {
             .gap(px(8.))
             .child(ui::filter_chip(
                 cx,
+                "transport-auto",
+                format!("自动 · {resolved}"),
+                mode == KindMode::Auto,
+                cx.listener(|app, _, _, cx| app.set_kind_mode(KindMode::Auto, cx)),
+            ))
+            .child(ui::filter_chip(
+                cx,
                 "transport-android",
-                DeviceKind::Android.label(),
-                !harmony,
-                cx.listener(|app, _, _, cx| app.set_device_kind(DeviceKind::Android, cx)),
+                "Android",
+                mode == KindMode::Android,
+                cx.listener(|app, _, _, cx| app.set_kind_mode(KindMode::Android, cx)),
             ))
             .child(ui::filter_chip(
                 cx,
                 "transport-harmony",
-                DeviceKind::Harmony.label(),
-                harmony,
-                cx.listener(|app, _, _, cx| app.set_device_kind(DeviceKind::Harmony, cx)),
+                "HarmonyOS",
+                mode == KindMode::Harmony,
+                cx.listener(|app, _, _, cx| app.set_kind_mode(KindMode::Harmony, cx)),
             ))
-            .child(
-                div()
-                    .flex_1()
-                    .text_size(px(10.5))
-                    .text_color(colors.on_surface_variant)
-                    .child("所有页面按当前协议操作设备；仅单方支持的功能会自动隐藏"),
-            )
             .child(anchor.capture_element())
     }
 

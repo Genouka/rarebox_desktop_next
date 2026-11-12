@@ -3,7 +3,7 @@
 use anyhow::bail;
 
 use crate::engine::{Core, Ctx};
-use crate::state::ToastKind;
+use crate::state::{DeviceKind, ToastKind};
 
 impl Core {
     pub(crate) fn wireless_connect(&mut self, address: String, cx: &mut Ctx) {
@@ -213,4 +213,282 @@ impl Core {
             },
         );
     }
+}
+
+/// 把底层报错归类，界面据此给修复入口（扫描 / 配对 / 换网）。
+pub fn classify_connect_error(raw: &str) -> crate::state::ConnectErrorKind {
+    use crate::state::ConnectErrorKind as Kind;
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("authenticate") || lower.contains("unauthorized") {
+        Kind::NeedsPairing
+    } else if lower.contains("refused")
+        || lower.contains("failed to connect")
+        || lower.contains("cannot connect")
+        || lower.contains("connection reset")
+    {
+        Kind::PortMismatch
+    } else if lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("unreachable")
+        || lower.contains("no route")
+    {
+        Kind::Unreachable
+    } else {
+        Kind::Other
+    }
+}
+
+impl Core {
+    /// 一个输入框连接任意设备：先试 ADB，再试 hdc，成功的一侧决定工作区。
+    pub(crate) fn connect_smart(&mut self, address: String, code: String, cx: &mut Ctx) {
+        let (host, port) = crate::scan::parse_endpoint(&address);
+        let Some(host) = host else {
+            cx.toast(ToastKind::Info, "请输入手表的无线调试地址");
+            return;
+        };
+        let code = code.trim().to_string();
+        let adb_path = self.state.adb_path.clone();
+        let hdc_path = self.state.harmony.path.clone();
+        let pair_address = port
+            .map(|port| format!("{host}:{port}"))
+            .unwrap_or_else(|| host.clone());
+        let try_ports: Vec<u16> = match port {
+            Some(port) => vec![port],
+            // 没填端口时按两套工具的默认端口各试一次。
+            None => vec![5555, 8710],
+        };
+        self.state.connect_error = None;
+        let task_pair_address = pair_address.clone();
+        self.run_task(
+            cx,
+            format!("正在连接 {host}…"),
+            move || {
+                let mut errors: Vec<String> = Vec::new();
+
+                // 1. 有配对码时先 pairing（ADB TLS）。
+                if !code.is_empty() {
+                    let Some(adb_path) = adb_path.as_ref() else {
+                        bail!("未找到 ADB，无法配对");
+                    };
+                    let adb = crate::adb::AdbClient::new(adb_path.clone());
+                    let args = vec!["pair".to_string(), task_pair_address.clone(), code.clone()];
+                    match adb.run_timed(&args, std::time::Duration::from_secs(20))? {
+                        Some(output) if output.success() => {}
+                        Some(output) => {
+                            let text = output.combined();
+                            bail!(
+                                "{{\"stage\":\"pair\",\"text\":{}}}",
+                                serde_json::to_string(text.trim()).unwrap_or_default()
+                            );
+                        }
+                        None => bail!("{{\"stage\":\"pair\",\"text\":\"配对超时\"}}"),
+                    }
+                }
+
+                // 2. ADB：逐个端口尝试。
+                if let Some(adb_path) = adb_path.as_ref() {
+                    let adb = crate::adb::AdbClient::new(adb_path.clone());
+                    for port in &try_ports {
+                        let address = format!("{host}:{port}");
+                        let args = vec!["connect".to_string(), address.clone()];
+                        if let Ok(Some(output)) =
+                            adb.run_timed(&args, std::time::Duration::from_secs(4))
+                        {
+                            let text = output.combined();
+                            let lower = text.to_ascii_lowercase();
+                            if output.success()
+                                && !lower.contains("failed")
+                                && !lower.contains("cannot")
+                            {
+                                return Ok(SmartConnect {
+                                    address,
+                                    kind: crate::state::DeviceKind::Android,
+                                });
+                            }
+                            errors.push(text);
+                        }
+                    }
+                }
+
+                // 3. hdc：逐个端口尝试。
+                if let Some(hdc_path) = hdc_path.as_ref() {
+                    let hdc = crate::hdc::HdcClient::new(hdc_path.clone());
+                    for port in &try_ports {
+                        let address = format!("{host}:{port}");
+                        let output = hdc.tconn(&address)?;
+                        let text = output.combined();
+                        if !output.is_failure() {
+                            return Ok(SmartConnect {
+                                address,
+                                kind: crate::state::DeviceKind::Harmony,
+                            });
+                        }
+                        errors.push(text);
+                    }
+                }
+
+                let detail = errors
+                    .last()
+                    .map(|text| text.trim().to_string())
+                    .unwrap_or_else(|| "连接被拒绝".to_string());
+                bail!(
+                    "{{\"stage\":\"connect\",\"text\":{}}}",
+                    serde_json::to_string(&detail).unwrap_or_default()
+                )
+            },
+            move |core, result, cx| match result {
+                Ok(done) => {
+                    core.state.connect_error = None;
+                    match done.kind {
+                        DeviceKind::Android => {
+                            core.state.kind_mode = crate::state::KindMode::Auto;
+                            core.state.wireless_address = done.address.clone();
+                            core.refresh_all(cx);
+                        }
+                        DeviceKind::Harmony => {
+                            core.state.harmony.selected = Some(done.address.clone());
+                            core.reset_hdc_device_state(cx);
+                            core.set_device_kind(DeviceKind::Harmony, cx);
+                            core.refresh_all(cx);
+                        }
+                    }
+                    cx.toast(ToastKind::Success, format!("已连接 {}", done.address));
+                }
+                Err(err) => {
+                    let raw = format!("{err:#}");
+                    let detail = extract_error_text(&raw);
+                    let kind = classify_connect_error(&detail);
+                    core.state.connect_error = Some(crate::state::ConnectErrorInfo {
+                        address: pair_address.clone(),
+                        kind,
+                        detail: detail.clone(),
+                    });
+                    cx.toast(ToastKind::Error, format!("连接失败：{detail}"));
+                }
+            },
+        );
+    }
+
+    /// 盲扫：先 TCP 探活，再用 adb/hdc 校验协议。
+    pub(crate) fn scan_devices(&mut self, address: String, deep: bool, cx: &mut Ctx) {
+        let plan = crate::scan::build_plan(&address, deep);
+        if plan.hosts.is_empty() {
+            cx.toast(ToastKind::Error, "找不到本机网段，请直接输入手表的 IP");
+            return;
+        }
+        let adb_path = self.state.adb_path.clone();
+        let hdc_path = self.state.harmony.path.clone();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.scan_cancel = cancel.clone();
+        self.state.scan = crate::state::ScanState {
+            running: true,
+            done: 0,
+            total: plan.total() as u32,
+            hits: Vec::new(),
+            scope: plan.scope.clone(),
+            deep,
+        };
+        let events = self.events.clone();
+        self.run_task(
+            cx,
+            format!("正在扫描 {}…", plan.scope),
+            move || {
+                use std::sync::atomic::AtomicUsize;
+                let done = AtomicUsize::new(0);
+                let progress = events.clone();
+                let cancel_probe = cancel.clone();
+                let done_probe = &done;
+                let hits = crate::scan::probe(
+                    &plan,
+                    std::time::Duration::from_millis(if deep { 120 } else { 300 }),
+                    if deep { 128 } else { 64 },
+                    &cancel_probe,
+                    done_probe,
+                );
+                let _ = progress;
+                let mut results = Vec::new();
+                for hit in hits {
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    // 协议校验：adb connect / hdc tconn 成功才算设备。
+                    let mut kind = None;
+                    let mut state = "端口开放".to_string();
+                    if let Some(adb_path) = adb_path.as_ref() {
+                        let adb = crate::adb::AdbClient::new(adb_path.clone());
+                        let args = vec!["connect".to_string(), hit.address.clone()];
+                        if let Ok(Some(output)) =
+                            adb.run_timed(&args, std::time::Duration::from_millis(1500))
+                        {
+                            let text = output.combined().to_ascii_lowercase();
+                            if output.success()
+                                && !text.contains("failed")
+                                && !text.contains("cannot")
+                            {
+                                kind = Some(DeviceKind::Android);
+                                state = "ADB 可连接".to_string();
+                            }
+                        }
+                    }
+                    if kind.is_none()
+                        && let Some(hdc_path) = hdc_path.as_ref()
+                    {
+                        let hdc = crate::hdc::HdcClient::new(hdc_path.clone());
+                        if let Ok(output) = hdc.tconn(&hit.address)
+                            && !output.is_failure()
+                        {
+                            kind = Some(DeviceKind::Harmony);
+                            state = "hdc 可连接".to_string();
+                        }
+                    }
+                    results.push(crate::state::ScanHit {
+                        address: hit.address,
+                        kind,
+                        state,
+                    });
+                }
+                Ok(results)
+            },
+            move |core, result, cx| {
+                core.state.scan.running = false;
+                match result {
+                    Ok(hits) => {
+                        core.state.scan.done = core.state.scan.total;
+                        core.state.scan.hits = hits;
+                        if core.state.scan.hits.is_empty() {
+                            cx.toast(ToastKind::Info, "没有扫到设备，试试手动输入地址");
+                        }
+                    }
+                    Err(err) => {
+                        cx.toast(ToastKind::Error, format!("扫描失败：{err:#}"));
+                    }
+                }
+            },
+        );
+    }
+
+    pub(crate) fn cancel_scan(&mut self) {
+        self.scan_cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.state.scan.running = false;
+    }
+}
+
+/// 智能连接成功后的结果。
+struct SmartConnect {
+    address: String,
+    kind: DeviceKind,
+}
+
+/// 从包装过的错误 JSON 里取出给用户看的正文。
+fn extract_error_text(raw: &str) -> String {
+    if let Some(start) = raw.find("{\"stage\"")
+        && let Ok(value) =
+            serde_json::from_str::<serde_json::Value>(&raw[start..raw.rfind('}').map_or(raw.len(), |i| i + 1)])
+    {
+        if let Some(text) = value.get("text").and_then(|text| text.as_str()) {
+            return text.to_string();
+        }
+    }
+    raw.to_string()
 }

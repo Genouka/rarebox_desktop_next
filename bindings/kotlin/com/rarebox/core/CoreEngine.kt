@@ -27,10 +27,30 @@ class CoreEngine private constructor(private var handle: Long) : AutoCloseable {
             CoreNative.setNativeLibraryDir(dir)
         }
 
-        /** Android 便捷入口：自动注入 `nativeLibraryDir` 后创建引擎。 */
+        /**
+         * Android / Wear 便捷入口：注入 `nativeLibraryDir` 与应用目录后创建引擎。
+         *
+         * 应用目录必须在创建前注入，否则配置文件、scrcpy-server 解包与
+         * 截图/下载会落到不可写路径。`create(configJson)` 不会自动注入。
+         */
         fun create(context: android.content.Context): CoreEngine {
-            setNativeLibraryDir(context.applicationInfo.nativeLibraryDir)
+            injectDirs(context)
             return create()
+        }
+
+        /** 与 [create] 相同，但使用显式 JSON 配置（手表可在此降低投屏画质）。 */
+        fun create(context: android.content.Context, configJson: String): CoreEngine {
+            injectDirs(context)
+            return create(configJson)
+        }
+
+        private fun injectDirs(context: android.content.Context) {
+            setNativeLibraryDir(context.applicationInfo.nativeLibraryDir)
+            CoreNative.setAppDirs(
+                context.filesDir.absolutePath,
+                (context.getExternalFilesDir("Pictures") ?: context.filesDir).absolutePath,
+                (context.getExternalFilesDir("Download") ?: context.filesDir).absolutePath,
+            )
         }
 
         /** 使用应用自己的配置文件（adb/hdc 路径、主题等）创建引擎。 */
@@ -41,42 +61,50 @@ class CoreEngine private constructor(private var handle: Long) : AutoCloseable {
          * `{"adb_path":"","hdc_path":"","dark":false,"seed":26997,...}`。
          * 字段与 `rarebox_core::config::Config` 的 serde 名称一致。
          */
-        fun create(configJson: String): CoreEngine = CoreEngine(nativeNewWithConfig(configJson))
+        fun create(configJson: String): CoreEngine =
+            CoreEngine(nativeNewWithConfig(configJson))
+
+        @JvmStatic
+        private external fun nativeNew(): Long
+
+        @JvmStatic
+        private external fun nativeNewWithConfig(configJson: String): Long
     }
 
     /** 投递一条 JSON 命令；返回 false 表示 JSON 无效或引擎已关闭。 */
     fun send(commandJson: String): Boolean {
-        val handle = handle
-        return handle != 0L && nativeSend(handle, commandJson)
+        val current = handle
+        return current != 0L && nativeSend(current, commandJson)
     }
 
     /** 最近一次发布的状态快照（camelCase JSON）。 */
     fun stateJson(): String {
-        val handle = handle
-        return if (handle == 0L) "{}" else (nativeState(handle) ?: "{}")
+        val current = handle
+        return if (current == 0L) "{}" else (nativeState(current) ?: "{}")
     }
 
     /** 订阅事件与画面帧。建议只调用一次。 */
     fun startEvents(listener: CoreListener) {
-        val handle = handle
-        if (handle != 0L) {
-            nativeStartEvents(handle, listener)
+        val current = handle
+        if (current != 0L) {
+            nativeStartEvents(current, listener)
         }
     }
 
     override fun close() {
-        val handle = handle
+        val current = handle
         handle = 0L
-        if (handle != 0L) {
-            nativeFree(handle)
+        if (current != 0L) {
+            nativeFree(current)
         }
     }
 
-    private external fun nativeNew(): Long
-    private external fun nativeNewWithConfig(configJson: String): Long
     private external fun nativeSend(handle: Long, commandJson: String): Boolean
+
     private external fun nativeState(handle: Long): String?
+
     private external fun nativeFree(handle: Long)
+
     private external fun nativeStartEvents(handle: Long, listener: CoreListener)
 }
 
@@ -91,6 +119,13 @@ object CoreNative {
 
     /** 必须在创建引擎之前调用；Android 上传入 `applicationInfo.nativeLibraryDir`。 */
     external fun setNativeLibraryDir(dir: String)
+
+    /**
+     * 必须在创建引擎之前调用；传入应用的数据、图片与下载目录。
+     *
+     * 与 `rarebox_engine_set_app_dirs` 对应，空字符串表示跳过该项。
+     */
+    external fun setAppDirs(dataDir: String, picturesDir: String, downloadsDir: String)
 }
 
 /**

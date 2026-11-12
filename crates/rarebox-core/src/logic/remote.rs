@@ -30,6 +30,8 @@ impl Core {
         };
 
         let adb_path = adb.program().to_path_buf();
+        let max_size = self.state.config.effective_remote_max_size();
+        let bitrate = self.state.config.effective_remote_bitrate();
         self.state.remote_generation = self.state.remote_generation.wrapping_add(1);
         let generation = self.state.remote_generation;
         self.state.remote_phase = RemotePhase::Starting;
@@ -39,7 +41,7 @@ impl Core {
         self.run_task(
             cx,
             "正在启动 scrcpy 远程控制…",
-            move || ScrcpySession::start(adb_path, serial, 1024),
+            move || ScrcpySession::start(adb_path, serial, max_size, bitrate),
             move |core, result, cx| {
                 if core.state.remote_generation != generation {
                     if let Ok(mut session) = result {

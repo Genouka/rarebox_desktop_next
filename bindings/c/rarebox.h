@@ -36,6 +36,11 @@ EngineHandle *rarebox_engine_new_with_config(const char *config_json);
 /* Android：设置 applicationInfo.nativeLibraryDir；须在 rarebox_engine_new* 前调用。 */
 void rarebox_engine_set_native_lib_dir(const char *dir);
 
+/* Android / Wear：设置数据、图片、下载目录；须在 rarebox_engine_new* 前调用。
+ * 空指针或空字符串表示跳过。 */
+void rarebox_engine_set_app_dirs(const char *data_dir, const char *pictures_dir,
+                                 const char *downloads_dir);
+
 void rarebox_engine_free(EngineHandle *handle);
 
 /* 投递 JSON 命令；JSON 无效或引擎已关闭时返回 false。 */

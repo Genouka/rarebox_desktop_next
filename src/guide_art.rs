@@ -17,6 +17,8 @@ pub fn bytes(name: &str) -> Option<&'static [u8]> {
             include_bytes!("../assets/guide/wireless.svg")
         }
         "connect_choose" => include_bytes!("../assets/guide/connect_choose.svg"),
+        "wlan_debug" | "wlan_tcpip" => include_bytes!("../assets/guide/wlan.svg"),
+        "wlan_connect" => include_bytes!("../assets/guide/wlan_connect.svg"),
         "app_pair" => include_bytes!("../assets/guide/app_pair.svg"),
         "driver_problem" | "driver_uac" | "driver_done" | "authorize" => {
             include_bytes!("../assets/guide/driver.svg")

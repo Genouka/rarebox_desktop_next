@@ -16,6 +16,8 @@ pub mod adb_driver;
 pub mod apk;
 pub mod command;
 pub mod config;
+pub mod connect_support;
+pub mod scan;
 pub mod engine;
 pub mod event;
 pub mod guide;

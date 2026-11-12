@@ -11,7 +11,7 @@ use crate::adb::{AppOpMode, RebootTarget};
 use crate::hdc::{HdcForward, HdcKey, HdcRebootTarget, HdcSwipeDirection, HdcTap};
 use crate::install::InstallToggle;
 use crate::signing::{ImportFile, SigningBlock};
-use crate::state::{ConfirmKind, DeviceKind, LogFilter};
+use crate::state::{ConfirmKind, DeviceKind, KindMode, LogFilter};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -30,6 +30,23 @@ pub enum Command {
     SetDeviceKind {
         kind: DeviceKind,
     },
+    /// 切换自动识别 / 手动锁定。
+    SetKindMode {
+        mode: KindMode,
+    },
+    /// 同时刷新 ADB、hdc 与 mDNS，用来自动识别设备类型。
+    RefreshAll,
+    /// 一个输入框连接任意设备：自动区分 ADB / hdc。
+    ConnectSmart {
+        address: String,
+        code: Option<String>,
+    },
+    /// 盲扫局域网里可能的调试端口。
+    ScanDevices {
+        address: String,
+        deep: bool,
+    },
+    CancelScan,
     WirelessConnect {
         address: String,
     },

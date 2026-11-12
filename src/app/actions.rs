@@ -10,7 +10,7 @@ use rarebox_core::adb::{AppOpMode, RebootTarget};
 use rarebox_core::hdc::{HdcForward, HdcKey, HdcRebootTarget, HdcSwipeDirection, HdcTap};
 use rarebox_core::install::InstallToggle;
 use rarebox_core::signing::{ImportFile, SigningBlock};
-use rarebox_core::state::ToastKind;
+use rarebox_core::state::{KindMode, ToastKind};
 
 use super::RareBox;
 
@@ -53,12 +53,6 @@ impl RareBox {
         self.core_command(Command::SelectHdcDevice { key });
     }
 
-    pub(crate) fn wireless_connect(&mut self, _cx: &mut Context<Self>) {
-        self.core_command(Command::WirelessConnect {
-            address: self.wireless_address.clone(),
-        });
-    }
-
     pub(crate) fn wireless_pair(&mut self, _cx: &mut Context<Self>) {
         self.core_command(Command::WirelessPair {
             address: self.pair_address.clone(),
@@ -72,6 +66,66 @@ impl RareBox {
 
     pub(crate) fn enable_tcpip(&mut self, _cx: &mut Context<Self>) {
         self.core_command(Command::EnableTcpip);
+    }
+
+    /// 「一个框连接」：自动区分 ADB / hdc。
+    ///
+    /// 配对是独立的一次操作，这里不再重复带配对码，避免把手表上的配对端口
+    /// 当成连接地址重放。
+    pub(crate) fn connect_smart(&mut self, _cx: &mut Context<Self>) {
+        let address = self.wireless_address.trim().to_string();
+        self.core_command(Command::ConnectSmart {
+            address,
+            code: None,
+        });
+    }
+
+    pub(crate) fn refresh_all(&mut self, _cx: &mut Context<Self>) {
+        self.core_command(Command::RefreshAll);
+    }
+
+    pub(crate) fn set_kind_mode(&mut self, mode: KindMode, cx: &mut Context<Self>) {
+        self.kind_mode = mode;
+        self.core_command(Command::SetKindMode { mode });
+        cx.notify();
+    }
+
+    /// 启动盲扫；`deep` 为单机全端口扫描。
+    pub(crate) fn start_scan(&mut self, deep: bool, cx: &mut Context<Self>) {
+        let address = self.scan_address.trim().to_string();
+        self.core_command(Command::ScanDevices { address, deep });
+        cx.notify();
+    }
+
+    pub(crate) fn cancel_scan(&mut self, cx: &mut Context<Self>) {
+        self.core_command(Command::CancelScan);
+        cx.notify();
+    }
+
+    pub(crate) fn clear_scan(&mut self, cx: &mut Context<Self>) {
+        self.scan = rarebox_core::state::ScanState::default();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_driver(&mut self, cx: &mut Context<Self>) {
+        self.driver_open = !self.driver_open;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_manual(&mut self, cx: &mut Context<Self>) {
+        self.manual_open = !self.manual_open;
+        cx.notify();
+    }
+
+    /// 扫描结果一键连接。
+    pub(crate) fn scan_connect(&mut self, address: String, cx: &mut Context<Self>) {
+        self.wireless_address = address.clone();
+        self.wireless_field
+            .update(cx, |state, cx| state.set_value(&address, cx));
+        self.core_command(Command::ConnectSmart {
+            address,
+            code: None,
+        });
     }
 
     pub(crate) fn disconnect_device(&mut self, serial: String, _cx: &mut Context<Self>) {

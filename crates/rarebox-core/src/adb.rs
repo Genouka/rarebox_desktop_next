@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use flate2::read::GzDecoder;
@@ -196,12 +197,21 @@ pub struct DeviceSnapshot {
     pub uptime_seconds: Option<u64>,
     pub load: Option<String>,
     pub ip: Option<String>,
+    /// 调试开关与能力读数（无线调试 / WLAN / USB）。
+    pub debug: crate::connect_support::DebugProbe,
 }
 
 impl DeviceSnapshot {
     pub fn is_wearable(&self) -> bool {
         let characteristics = self.characteristics.to_ascii_lowercase();
         characteristics.contains("watch") || self.model.to_ascii_lowercase().contains("watch")
+    }
+
+    /// 三种调试通道的结论；`.ip` 取自本快照。
+    pub fn debug_support(&self) -> crate::connect_support::ConnectionSupport {
+        let mut support = crate::connect_support::ConnectionSupport::infer(&self.debug);
+        support.ip = self.ip.clone();
+        support
     }
 
     pub fn title(&self) -> String {
@@ -576,6 +586,64 @@ impl AdbClient {
         Ok(parse_devices(&output.stdout))
     }
 
+    /// 通过 `adb mdns services` 发现局域网里正在广播的设备。
+    ///
+    /// 无线调试开关打开时广播 `_adb-tls-connect._tcp`，配对弹窗打开时广播
+    /// `_adb-tls-pairing._tcp`；旧版 `adb tcpip` 广播 `_adb._tcp`。
+    /// adb 低于 30 不认识 `mdns` 子命令，这里返回空列表而不是报错。
+    pub fn mdns_services(&self) -> Result<Vec<MdnsService>> {
+        let output = self.run(&["mdns".to_string(), "services".to_string()])?;
+        if !output.success() {
+            return Ok(Vec::new());
+        }
+        Ok(parse_mdns_services(&output.stdout))
+    }
+
+    /// 带超时执行 adb：超时返回 `Ok(None)`，进程会被杀掉。
+    ///
+    /// 盲扫要在一批候选端口上逐个试连，必须能快速放弃卡住的子进程。
+    pub fn run_timed(&self, args: &[String], timeout: Duration) -> Result<Option<AdbOutput>> {
+        let mut command = Command::new(&self.program);
+        prepare_command(&mut command);
+        command
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        command.creation_flags(CREATE_NO_WINDOW);
+
+        let mut child = command
+            .spawn()
+            .with_context(|| format!("无法执行 ADB：{}", self.program.display()))?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Ok(None);
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(err) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(err).context("等待 ADB 结束失败");
+                }
+            }
+        }
+        let output = child.wait_with_output()?;
+        Ok(Some(AdbOutput {
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        }))
+    }
+
     pub fn shell(&self, serial: &str, command: &str) -> Result<AdbOutput> {
         self.run(&[
             "-s".to_string(),
@@ -841,6 +909,18 @@ echo @@ROTATION
 settings get system user_rotation
 echo @@IP
 ip route
+echo @@ADB_ENABLED
+settings get global adb_enabled
+echo @@ADB_WIFI
+settings get global adb_wifi_enabled
+echo @@ADB_TCP
+getprop service.adb.tcp.port
+echo @@USB_CONFIG
+getprop persist.sys.usb.config
+echo @@FEATURES
+pm list features
+echo @@UDC
+if [ -d /sys/class/udc ]; then ls /sys/class/udc; else echo NO_UDC_DIR; fi
 echo @@END
 "#;
 
@@ -938,6 +1018,109 @@ fn read_exact(reader: &mut impl Read, buffer: &mut [u8]) -> Result<bool> {
     Ok(true)
 }
 
+/// `adb mdns services` 发现的一台设备。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MdnsService {
+    /// mDNS 实例名（通常形如 `adb-<序列号>-<随机后缀>`）。
+    pub instance: String,
+    pub kind: MdnsKind,
+    /// `IP:端口`，可直接交给 `adb connect` / `adb pair`。
+    pub address: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MdnsKind {
+    /// `_adb-tls-pairing._tcp`：配对弹窗打开时才存在。
+    Pairing,
+    /// `_adb-tls-connect._tcp`：无线调试开启期间存在。
+    Connect,
+    /// `_adb._tcp`：旧版 `adb tcpip` 广播。
+    Legacy,
+}
+
+impl MdnsKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            MdnsKind::Pairing => "配对",
+            MdnsKind::Connect => "连接",
+            MdnsKind::Legacy => "旧版无线",
+        }
+    }
+}
+
+/// 解析 `adb mdns services`。
+///
+/// 输出形如：
+/// ```text
+/// List of discovered mdns services
+/// adb-XXXX-_adb-tls-pairing._tcp  _adb-tls-pairing._tcp   192.168.1.5:39183
+/// ```
+/// 不同 adb 版本的分隔符与列数略有差异，因此不按固定列取，而是：
+/// 1. 任意 token 含服务类型 → 判类型；
+/// 2. 任意 token 形如 `host:port` → 作为地址（IPv6 取最后一个冒号）。
+pub fn parse_mdns_services(raw: &str) -> Vec<MdnsService> {
+    let mut result = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with("List of")
+            || line.starts_with('*')
+            || line.starts_with("adb server")
+        {
+            continue;
+        }
+        let tokens: Vec<&str> = line
+            .split(|c: char| c == '\t' || c == ' ')
+            .filter(|token| !token.is_empty())
+            .collect();
+        if tokens.is_empty() {
+            continue;
+        }
+        let kind = if line.contains("_adb-tls-pairing._tcp") {
+            MdnsKind::Pairing
+        } else if line.contains("_adb-tls-connect._tcp") {
+            MdnsKind::Connect
+        } else if line.contains("_adb._tcp") {
+            MdnsKind::Legacy
+        } else {
+            continue;
+        };
+        let Some(address) = tokens.iter().find_map(|token| normalize_endpoint(token)) else {
+            continue;
+        };
+        // 实例名取第一个不含服务类型的 token；去掉结尾的点。
+        let instance = tokens
+            .iter()
+            .find(|token| !token.contains("._tcp") && !token.contains(':'))
+            .map(|token| token.trim_end_matches('.').to_string())
+            .unwrap_or_else(|| address.clone());
+        result.push(MdnsService {
+            instance,
+            kind,
+            address,
+        });
+    }
+    result
+}
+
+/// 把一个 `host:port` token 规范化；不像地址就返回 None。
+///
+/// 兼容 `[fe80::1]:5555` 与 `192.168.1.5:5555`，拒绝没有端口或端口非数字的 token。
+fn normalize_endpoint(token: &str) -> Option<String> {
+    let token = token.trim_end_matches('.');
+    let (host, port) = token.rsplit_once(':')?;
+    let port = port.parse::<u16>().ok()?;
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if host.is_empty() {
+        return None;
+    }
+    // 只接受 IP 或主机名；避免把 `adb-xxx:5555` 之类的实例名当成地址。
+    if !host.chars().any(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("{host}:{port}"))
+}
+
 pub fn parse_devices(raw: &str) -> Vec<Device> {
     let mut devices = Vec::new();
     for line in raw.lines() {
@@ -1019,6 +1202,28 @@ pub fn parse_snapshot(serial: &str, raw: &str) -> DeviceSnapshot {
         .to_string()
         .into_option();
     let ip = parse_ip(&get("IP"));
+    let (has_wifi, has_ethernet) =
+        crate::connect_support::parse_network_features(&get("FEATURES"));
+    let udc_raw = get("UDC");
+    let usb_gadget = if udc_raw.trim() == "NO_UDC_DIR" {
+        Some(false)
+    } else if udc_raw.trim().is_empty() {
+        None
+    } else {
+        Some(true)
+    };
+    let debug = crate::connect_support::DebugProbe {
+        sdk: get("SDK").trim().parse().unwrap_or(0),
+        has_wifi,
+        has_ethernet,
+        adb_enabled: crate::connect_support::parse_setting(&get("ADB_ENABLED")),
+        adb_wifi_enabled: crate::connect_support::parse_setting(&get("ADB_WIFI")),
+        tcp_port: crate::connect_support::parse_tcp_port(&get("ADB_TCP")),
+        usb_config_adb: get("USB_CONFIG")
+            .split(',')
+            .any(|part| part.trim().eq_ignore_ascii_case("adb")),
+        usb_gadget,
+    };
 
     DeviceSnapshot {
         serial: serial.to_string(),
@@ -1042,6 +1247,7 @@ pub fn parse_snapshot(serial: &str, raw: &str) -> DeviceSnapshot {
         uptime_seconds,
         load,
         ip,
+        debug,
     }
 }
 
@@ -1625,6 +1831,56 @@ mod tests {
         // 菜单必须覆盖全部目标，且每一项都有独立的图标。
         let icons: HashSet<&str> = RebootTarget::ALL.iter().map(|t| t.icon()).collect();
         assert_eq!(icons.len(), RebootTarget::ALL.len());
+    }
+
+    #[test]
+    fn parses_mdns_services_with_pairing_and_connect() {
+        let raw = "List of discovered mdns services\n\
+                   adb-R5CT30ABCDE-1a2b3c-_adb-tls-pairing._tcp\t_adb-tls-pairing._tcp.\t192.168.1.5:39183\n\
+                   adb-R5CT30ABCDE-1a2b3c-_adb-tls-connect._tcp\t_adb-tls-connect._tcp.\t192.168.1.5:37231\n\
+                   adb-1-2-_adb._tcp\t_adb._tcp.\t192.168.1.9:5555\n";
+        let services = parse_mdns_services(raw);
+        assert_eq!(services.len(), 3);
+        assert_eq!(services[0].kind, MdnsKind::Pairing);
+        assert_eq!(services[0].address, "192.168.1.5:39183");
+        assert_eq!(services[1].kind, MdnsKind::Connect);
+        assert_eq!(services[1].address, "192.168.1.5:37231");
+        assert_eq!(services[2].kind, MdnsKind::Legacy);
+    }
+
+    #[test]
+    fn mdns_parser_accepts_ipv6_and_noise() {
+        let raw = "List of discovered mdns services\n\
+                   adb-X-1-_adb-tls-connect._tcp _adb-tls-connect._tcp. [fe80::1]:5555\n\
+                   garbage line without address\n\
+                   adb-Y-2-_adb-tls-pairing._tcp _adb-tls-pairing._tcp.\n";
+        let services = parse_mdns_services(raw);
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].address, "fe80::1:5555");
+    }
+
+    #[test]
+    fn snapshot_reads_debug_probe() {
+        let raw = "@@SDK\n33\n@@FEATURES\nfeature:req:android.hardware.wifi\n\
+                   @@ADB_ENABLED\n1\n@@ADB_WIFI\n1\n@@ADB_TCP\n5555\n\
+                   @@USB_CONFIG\nmtp,adb\n@@UDC\nfe800000.dwc3\n@@END\n";
+        let snapshot = parse_snapshot("SERIAL", raw);
+        assert_eq!(snapshot.debug.sdk, 33);
+        assert!(snapshot.debug.has_wifi);
+        assert!(!snapshot.debug.has_ethernet);
+        assert_eq!(snapshot.debug.adb_enabled, Some(true));
+        assert_eq!(snapshot.debug.adb_wifi_enabled, Some(true));
+        assert_eq!(snapshot.debug.tcp_port, Some(5555));
+        assert!(snapshot.debug.usb_config_adb);
+        assert_eq!(snapshot.debug.usb_gadget, Some(true));
+    }
+
+    #[test]
+    fn snapshot_marks_missing_udc_directory() {
+        let raw = "@@SDK\n30\n@@UDC\nNO_UDC_DIR\n@@END\n";
+        let snapshot = parse_snapshot("SERIAL", raw);
+        assert_eq!(snapshot.debug.usb_gadget, Some(false));
+        assert_eq!(snapshot.debug.adb_wifi_enabled, None);
     }
 
     #[test]

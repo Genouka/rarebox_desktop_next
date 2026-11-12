@@ -18,6 +18,10 @@ Thumbs.db
 /android/.cxx/
 /android/captures/
 /android/app/src/main/jniLibs/
+/wear/local.properties
+/wear/.gradle/
+/wear/build/
+/wear/app/build/
 
 # HarmonyOS / DevEco
 /ohos/**/build/

@@ -7,7 +7,7 @@ ABIS="${RAREBOX_WATCH_ABIS:-arm64-v8a,x86_64}"
 API="${RAREBOX_ANDROID_API:-26}"
 OUT="${RAREBOX_WATCH_OUT:-dist/jniLibs}"
 
-if [ -z "$(command -v cargo-ndk)" ]; then
+if ! cargo ndk --version >/dev/null 2>&1; then
     echo "需要 cargo-ndk：cargo install cargo-ndk" >&2
     exit 1
 fi

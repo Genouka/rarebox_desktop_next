@@ -1337,12 +1337,16 @@ impl RareBox {
     }
 
     /// 当前工作区用来解决“没有设备”的教程。
+    ///
+    /// 已探测过手表能力时直接进对应教程，不再让用户从三个入口里猜。
     pub(crate) fn guide_connect_target(&self) -> &'static str {
         if self.is_harmony() {
-            "harmony_connect"
-        } else {
-            "connect_choose"
+            return "harmony_connect";
         }
+        self.snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.debug_support().guide_id())
+            .unwrap_or("connect_choose")
     }
 
     fn is_connection_guide(id: &str) -> bool {
@@ -1351,6 +1355,7 @@ impl RareBox {
             "connect_choose"
                 | "connect_usb"
                 | "connect_wireless"
+                | "connect_wlan"
                 | "harmony_connect"
                 | "driver"
                 | "not_connecting"
@@ -2013,18 +2018,30 @@ impl RareBox {
         );
 
         if !step.choices.is_empty() {
+            // 有探测结论时，给匹配的方式打「推荐」，其余保持可点。
+            let recommended = self
+                .snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.debug_support())
+                .and_then(|support| support.recommended())
+                .map(|transport| transport.guide_id());
             let choices: Vec<AnyElement> = step
                 .choices
                 .iter()
                 .enumerate()
                 .map(|(index, choice)| {
                     let weak = weak.clone();
+                    let is_recommended = recommended == Some(choice.guide);
                     div()
                         .id(ElementId::Name(format!("guide-choice-{index}").into()))
                         .w_full()
                         .p(px(12.))
                         .rounded(px(14.))
-                        .bg(colors.surface_container)
+                        .bg(if is_recommended {
+                            colors.secondary_container
+                        } else {
+                            colors.surface_container
+                        })
                         .flex()
                         .items_center()
                         .gap(px(12.))
@@ -2061,10 +2078,28 @@ impl RareBox {
                                 .min_w(px(0.))
                                 .child(
                                     div()
-                                        .text_size(px(15.))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(colors.on_surface)
-                                        .child(choice.label),
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(6.))
+                                        .child(
+                                            div()
+                                                .text_size(px(15.))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_color(colors.on_surface)
+                                                .child(choice.label),
+                                        )
+                                        .when(is_recommended, |el| {
+                                            el.child(
+                                                div()
+                                                    .px(px(6.))
+                                                    .py(px(1.))
+                                                    .rounded(px(6.))
+                                                    .bg(colors.primary)
+                                                    .text_size(px(10.))
+                                                    .text_color(colors.on_primary)
+                                                    .child("推荐"),
+                                            )
+                                        }),
                                 )
                                 .child(
                                     div()
@@ -2087,7 +2122,7 @@ impl RareBox {
                 div()
                     .text_size(px(12.))
                     .text_color(colors.on_surface_variant)
-                    .child("选一个方式开始；不确定就先用 USB，随时可以中断。"),
+                    .child("点一种方式开始，随时可以中断。"),
             );
             return card;
         }

@@ -35,6 +35,106 @@ impl DeviceKind {
     }
 }
 
+/// 顶栏协议选择：自动识别（推荐）或手动锁定。
+///
+/// 用户通常分不清 Android 手表和 HarmonyOS 手表，默认 `Auto`：
+/// 哪边探测到在线设备就用哪边，只有用户主动点芯片才锁定。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KindMode {
+    #[default]
+    Auto,
+    Android,
+    Harmony,
+}
+
+impl KindMode {
+    pub fn is_auto(self) -> bool {
+        matches!(self, KindMode::Auto)
+    }
+
+    pub fn locked(self) -> Option<DeviceKind> {
+        match self {
+            KindMode::Auto => None,
+            KindMode::Android => Some(DeviceKind::Android),
+            KindMode::Harmony => Some(DeviceKind::Harmony),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            KindMode::Auto => "自动",
+            KindMode::Android => "Android",
+            KindMode::Harmony => "HarmonyOS",
+        }
+    }
+}
+
+/// 盲扫结果的一条候选。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScanHit {
+    /// `IP:端口`。
+    pub address: String,
+    /// 协议校验成功后识别出的设备类型；`None` 表示端口开放但不像调试端口。
+    pub kind: Option<DeviceKind>,
+    pub state: String,
+}
+
+/// 盲扫的实时状态。
+#[derive(Clone, Debug, Default)]
+pub struct ScanState {
+    pub running: bool,
+    pub done: u32,
+    pub total: u32,
+    pub hits: Vec<ScanHit>,
+    /// 扫描范围描述，例如「192.168.1.0/24」。
+    pub scope: String,
+    /// 深度扫描（单机全端口）比快扫慢，界面要提示可取消。
+    pub deep: bool,
+}
+
+impl ScanState {
+    pub fn progress(&self) -> f32 {
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.done as f32 / self.total as f32).clamp(0.0, 1.0)
+        }
+    }
+}
+
+/// 连接失败的原因分类，决定界面给哪个修复入口。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectErrorKind {
+    /// 端口拒绝：可能端口填错。
+    PortMismatch,
+    /// 超时 / 不可达：可能 IP 错或不同网段。
+    Unreachable,
+    /// 需要先配对。
+    NeedsPairing,
+    /// 其他（协议错误、工具缺失等）。
+    Other,
+}
+
+impl ConnectErrorKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            ConnectErrorKind::PortMismatch => "端口可能填错",
+            ConnectErrorKind::Unreachable => "IP 或网络可能不对",
+            ConnectErrorKind::NeedsPairing => "需要先配对",
+            ConnectErrorKind::Other => "连接失败",
+        }
+    }
+}
+
+/// 最近一次连接失败的上下文。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConnectErrorInfo {
+    pub address: String,
+    pub kind: ConnectErrorKind,
+    pub detail: String,
+}
+
 /// 远程投屏会话的状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RemotePhase {
@@ -270,12 +370,20 @@ pub struct UpdateData {
 /// 引擎状态：可克隆、可跨线程传递，不包含任何界面句柄。
 #[derive(Clone, Debug)]
 pub struct CoreState {
+    pub kind_mode: KindMode,
     pub device_kind: DeviceKind,
     pub config: Config,
 
     pub adb_path: Option<PathBuf>,
     pub adb_version: Option<String>,
     pub adb_error: Option<String>,
+
+    /// `adb mdns services` 发现的附近设备（配对 / 连接 / 旧版无线）。
+    pub mdns: Vec<crate::adb::MdnsService>,
+    /// 盲扫的实时状态。
+    pub scan: ScanState,
+    /// 最近一次连接失败的原因，界面据此给出修复入口。
+    pub connect_error: Option<ConnectErrorInfo>,
 
     pub hdc_input: String,
     pub harmony: HarmonyState,
@@ -350,11 +458,15 @@ pub struct CoreState {
 impl Default for CoreState {
     fn default() -> Self {
         Self {
+            kind_mode: KindMode::Auto,
             device_kind: DeviceKind::default(),
             config: Config::load(),
             adb_path: None,
             adb_version: None,
             adb_error: None,
+            mdns: Vec::new(),
+            scan: ScanState::default(),
+            connect_error: None,
             hdc_input: String::new(),
             harmony: HarmonyState::default(),
             signing: SigningUi::new(),

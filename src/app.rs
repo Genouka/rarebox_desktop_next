@@ -37,8 +37,8 @@ use rarebox_core::adb::{
 use rarebox_core::config::Config;
 pub(crate) use rarebox_core::signing::{ImportFile, LoginPhase, SigningUi};
 pub(crate) use rarebox_core::state::{
-    ConfirmKind, CoreState, DeviceKind, HarmonyState, HdcInstallReport, LogFilter, PackageScope,
-    RemotePhase, TerminalEntry, ToastKind,
+    ConfirmKind, CoreState, DeviceKind, HarmonyState, HdcInstallReport, KindMode, LogFilter,
+    PackageScope, RemotePhase, TerminalEntry, ToastKind,
 };
 use rarebox_core::update;
 use rarebox_core::{Command, Engine};
@@ -298,6 +298,22 @@ pub struct RareBox {
     pair_code: String,
     pair_code_field: Entity<TextFieldState>,
 
+    /// 自动识别 / 手动锁定设备类型。
+    kind_mode: KindMode,
+    /// `adb mdns services` 发现的附近设备。
+    mdns: Vec<rarebox_core::adb::MdnsService>,
+    /// 盲扫的实时状态。
+    scan: rarebox_core::state::ScanState,
+    /// 最近一次连接失败的原因。
+    connect_error: Option<rarebox_core::state::ConnectErrorInfo>,
+    /// 扫描输入（留空时扫本机网段）。
+    scan_address: String,
+    scan_field: Entity<TextFieldState>,
+    /// USB 驱动卡是否展开（默认收起，减少文字）。
+    driver_open: bool,
+    /// 手动输入地址区是否展开。
+    manual_open: bool,
+
     scroll_handles: [ScrollHandle; Page::ALL.len()],
     sidebar_open: bool,
     confirm: Option<Confirm>,
@@ -526,7 +542,7 @@ impl RareBox {
                         let weak = weak.clone();
                         move |_, _, cx| {
                             if let Err(err) = weak.update(cx, |app: &mut Self, cx| {
-                                app.wireless_connect(cx);
+                                app.connect_smart(cx);
                             }) {
                                 eprintln!("RareBox Desktop: 无线连接失败: {err}");
                             }
@@ -568,6 +584,29 @@ impl RareBox {
                             app.wireless_pair(cx);
                         }) {
                             eprintln!("RareBox Desktop: 无线配对失败: {err}");
+                        }
+                    })
+                    .build(cx)
+            };
+
+            let scan_field = {
+                let weak = weak.clone();
+                let change_weak = weak.clone();
+                TextField::new("connect-scan-address", "留空扫本机网段，或填 IP")
+                    .leading_icon(IconName::new("search"))
+                    .on_change(move |value, _, cx| {
+                        if let Err(err) = change_weak.update(cx, |app: &mut Self, cx| {
+                            app.scan_address = value.to_string();
+                            cx.notify();
+                        }) {
+                            eprintln!("RareBox Desktop: 更新扫描地址失败: {err}");
+                        }
+                    })
+                    .on_submit(move |_, _, cx| {
+                        if let Err(err) = weak.update(cx, |app: &mut Self, cx| {
+                            app.start_scan(false, cx);
+                        }) {
+                            eprintln!("RareBox Desktop: 启动扫描失败: {err}");
                         }
                     })
                     .build(cx)
@@ -954,6 +993,14 @@ impl RareBox {
                 pair_field,
                 pair_code: String::new(),
                 pair_code_field,
+                kind_mode: KindMode::Auto,
+                mdns: Vec::new(),
+                scan: rarebox_core::state::ScanState::default(),
+                connect_error: None,
+                scan_address: String::new(),
+                scan_field,
+                driver_open: false,
+                manual_open: false,
                 scroll_handles: std::array::from_fn(|_| ScrollHandle::new()),
                 guide: guide_ui::GuideUi::new(guide_query_field),
                 sidebar_open: false,

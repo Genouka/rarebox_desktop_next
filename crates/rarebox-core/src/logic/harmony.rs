@@ -63,7 +63,7 @@ impl Core {
         );
     }
 
-    fn apply_hdc_devices(&mut self, devices: Vec<HdcDevice>, cx: &mut Ctx) {
+    pub(crate) fn apply_hdc_devices(&mut self, devices: Vec<HdcDevice>, cx: &mut Ctx) {
         let previous = self.state.harmony.selected.clone();
         self.state.harmony.devices = devices;
         let next = previous

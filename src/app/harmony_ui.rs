@@ -204,9 +204,9 @@ impl RareBox {
                 "devices",
                 "未检测到 hdc",
                 if cfg!(any(target_os = "android", target_os = "ios")) {
-                    "鸿蒙调试使用 HarmonyOS Device Connector（hdc）。Android 端已内置 hdc（libhdc.so），可通过 USB OTG 直连鸿蒙设备（系统弹窗允许 USB 权限），也可用 hdc tconn 无线连接；还能在设置中指定外部 hdc。"
+                    "hdc 未就绪。可用 USB OTG 直连，或 tconn 无线连接；也可在设置里指定 hdc。"
                 } else {
-                    "鸿蒙调试使用 HarmonyOS Device Connector（hdc）。各平台都已内置 hdc；解包或加载失败时会回退到 DevEco Studio / OpenHarmony SDK 的 toolchains 目录，也可在设置中指定外部路径。"
+                    "hdc 未就绪。已内置 hdc；也可在设置里指定 DevEco Studio 的 hdc 路径。"
                 },
                 Some(actions),
             )
@@ -627,7 +627,7 @@ impl RareBox {
                                 .text_size(px(11.5))
                                 .line_height(px(17.))
                                 .text_color(colors.on_surface_variant)
-                                .child("没有设备。请开启开发者模式与 USB 调试并授权本机，或使用下方网络连接。"),
+                                .child("没有设备。开 USB 调试并授权，或使用下方连接。"),
                         )
                     })
                     .children(devices.iter().enumerate().map(|(index, device)| {
@@ -683,7 +683,7 @@ impl RareBox {
                     .text_size(px(10.5))
                     .line_height(px(16.))
                     .text_color(colors.on_surface_variant)
-                    .child("地址格式为 IP:端口，只填 IP 时默认使用 5555。设备端需开启「开发者选项 → 无线调试」，并确保本机能访问该地址。"),
+                    .child("IP:端口；只填 IP 默认 5555。手表端需开启无线调试。"),
             );
 
         let wireless_card = Card::new()
@@ -735,7 +735,7 @@ impl RareBox {
                     .text_size(px(10.5))
                     .line_height(px(16.))
                     .text_color(colors.on_surface_variant)
-                    .child("开启需要一台已授权的 USB 设备；成功后设备地址会出现在上方，可直接点击连接。"),
+                    .child("需要一台已授权的 USB 设备；成功后地址会出现在上方。"),
             );
 
         let forwards = self.harmony.forwards.clone();

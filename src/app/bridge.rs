@@ -122,10 +122,14 @@ impl RareBox {
         let prev = self.core_state.clone();
 
         self.device_kind = state.device_kind;
+        self.kind_mode = state.kind_mode;
         self.config = state.config.clone();
         self.adb_path = state.adb_path.clone();
         self.adb_version = state.adb_version.clone();
         self.adb_error = state.adb_error.clone();
+        self.mdns = state.mdns.clone();
+        self.scan = state.scan.clone();
+        self.connect_error = state.connect_error.clone();
 
         self.harmony.path = state.harmony.path.clone();
         self.harmony.version = state.harmony.version.clone();

@@ -10,20 +10,19 @@ static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 static PICTURES_DIR: OnceLock<PathBuf> = OnceLock::new();
 static DOWNLOADS_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-/// 由平台入口设置应用数据目录（Android 的 `files` 目录）。
-#[cfg(target_os = "android")]
+/// 由平台入口设置应用数据目录（Android 的 `files` 目录，或 Kotlin 宿主的 `filesDir`）。
+///
+/// 必须在创建引擎之前调用；重复调用只有第一次生效。
 pub fn set_data_dir(dir: PathBuf) {
     let _ = DATA_DIR.set(dir);
 }
 
 /// 由平台入口设置图片/媒体目录。
-#[cfg(target_os = "android")]
 pub fn set_pictures_dir(dir: PathBuf) {
     let _ = PICTURES_DIR.set(dir);
 }
 
 /// 由平台入口设置下载目录。
-#[cfg(target_os = "android")]
 pub fn set_downloads_dir(dir: PathBuf) {
     let _ = DOWNLOADS_DIR.set(dir);
 }
@@ -42,6 +41,10 @@ pub struct Config {
     pub seed: u32,
     /// 截屏 / 录屏保存目录；为空时使用图片目录下的 RareBox Desktop。
     pub screenshot_dir: Option<String>,
+    /// 远程画面最大边长（像素）。手表等小屏可以调低以节省带宽与内存。
+    pub remote_max_size: u32,
+    /// 远程视频码率（bps）。0 表示使用默认值。
+    pub remote_bitrate: u32,
     /// APK 安装参数，跨重启保留。
     pub install: crate::install::InstallOptions,
     /// 已接受的 EULA / 隐私政策版本；为空表示尚未同意，首次启动需联网展示并确认。
@@ -58,9 +61,32 @@ impl Default for Config {
             dark: false,
             seed: 0x00_69_6D,
             screenshot_dir: None,
+            remote_max_size: DEFAULT_REMOTE_MAX_SIZE,
+            remote_bitrate: 8_000_000,
             install: crate::install::InstallOptions::default(),
             accepted_legal_version: None,
             kill_processes_on_exit: true,
+        }
+    }
+}
+
+/// 投屏默认最大边长，沿用桌面端既有行为。
+pub const DEFAULT_REMOTE_MAX_SIZE: u32 = 1024;
+
+impl Config {
+    /// 远程画面最大边长；0 或过小的值回落到默认值。
+    pub fn effective_remote_max_size(&self) -> u32 {
+        match self.remote_max_size {
+            0..=255 => DEFAULT_REMOTE_MAX_SIZE,
+            value => value.min(4096),
+        }
+    }
+
+    /// 远程视频码率；0 回落到 8 Mbps。
+    pub fn effective_remote_bitrate(&self) -> u32 {
+        match self.remote_bitrate {
+            0 => 8_000_000,
+            value => value.clamp(100_000, 100_000_000),
         }
     }
 }
@@ -242,6 +268,8 @@ mod tests {
             dark: true,
             seed: 0x123456,
             screenshot_dir: Some("C:/shots".to_string()),
+            remote_max_size: 512,
+            remote_bitrate: 2_000_000,
             accepted_legal_version: None,
             kill_processes_on_exit: false,
             install: crate::install::InstallOptions {
@@ -256,10 +284,35 @@ mod tests {
         assert_eq!(parsed.hdc_path, config.hdc_path);
         assert!(parsed.dark);
         assert_eq!(parsed.seed, config.seed);
+        assert_eq!(parsed.remote_max_size, 512);
+        assert_eq!(parsed.remote_bitrate, 2_000_000);
         assert!(!parsed.kill_processes_on_exit);
         assert!(parsed.install.downgrade);
         assert!(parsed.install.allow_test);
         assert!(parsed.install.replace);
+    }
+
+    #[test]
+    fn remote_quality_defaults_and_clamps() {
+        let legacy: Config = serde_json::from_str(r#"{"adb_path":"adb"}"#).unwrap();
+        assert_eq!(legacy.effective_remote_max_size(), 1024);
+        assert_eq!(legacy.effective_remote_bitrate(), 8_000_000);
+
+        let watch = Config {
+            remote_max_size: 512,
+            remote_bitrate: 2_000_000,
+            ..Config::default()
+        };
+        assert_eq!(watch.effective_remote_max_size(), 512);
+        assert_eq!(watch.effective_remote_bitrate(), 2_000_000);
+
+        let zero = Config {
+            remote_max_size: 0,
+            remote_bitrate: 0,
+            ..Config::default()
+        };
+        assert_eq!(zero.effective_remote_max_size(), 1024);
+        assert_eq!(zero.effective_remote_bitrate(), 8_000_000);
     }
 
     #[test]

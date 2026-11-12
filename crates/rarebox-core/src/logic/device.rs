@@ -3,9 +3,61 @@
 use anyhow::Context as _;
 use chrono::Local;
 
-use crate::adb::{AdbClient, Device, DeviceSnapshot, detect_adb};
+use std::path::PathBuf;
+
+use crate::adb::{AdbClient, Device, DeviceSnapshot, MdnsService, detect_adb};
 use crate::engine::{Core, Ctx};
+use crate::hdc::{self, HdcClient, HdcDevice};
 use crate::state::{DeviceKind, ToastKind};
+
+/// 一次 ADB 探测的完整结果。
+struct AdbProbe {
+    path: PathBuf,
+    version: String,
+    devices: Vec<Device>,
+    mdns: Vec<MdnsService>,
+}
+
+/// 一次 hdc 探测的完整结果。
+struct HdcProbe {
+    path: PathBuf,
+    version: String,
+    devices: Vec<HdcDevice>,
+}
+
+fn probe_adb(configured: &str) -> anyhow::Result<AdbProbe> {
+    let hint = if cfg!(target_os = "android") {
+        "未找到可用的 ADB，请在设置中指定 adb 路径，或使用无线 ADB 连接网络设备"
+    } else {
+        "未找到可用的 ADB，请在设置中指定 platform-tools/adb.exe"
+    };
+    let (path, version) = detect_adb(configured).context(hint)?;
+    let client = AdbClient::new(path.clone());
+    let devices = client.devices()?;
+    let mdns = client.mdns_services().unwrap_or_default();
+    Ok(AdbProbe {
+        path,
+        version,
+        devices,
+        mdns,
+    })
+}
+
+fn probe_hdc(configured: &str) -> anyhow::Result<HdcProbe> {
+    let hint = if cfg!(target_os = "android") {
+        "未找到可用的 hdc：内置 libhdc.so 不可用；请在设置中指定 hdc 路径"
+    } else {
+        "未找到可用的 hdc：内置 hdc 不可用，且本机未安装 DevEco Studio / OpenHarmony SDK；请在设置中指定 hdc 路径"
+    };
+    let (path, version) = hdc::detect_hdc(configured).context(hint)?;
+    let client = HdcClient::new(path.clone());
+    let devices = client.targets()?;
+    Ok(HdcProbe {
+        path,
+        version,
+        devices,
+    })
+}
 
 impl Core {
     pub(crate) fn refresh_devices(&mut self, cx: &mut Ctx) {
@@ -64,6 +116,123 @@ impl Core {
         self.state.selected_serial = next.clone();
         if next != previous {
             self.reset_device_state(cx);
+        }
+    }
+
+    /// 同时探测 ADB / hdc / mDNS，并据此决定当前工作区。
+    ///
+    /// 两个工具互不依赖，缺一个不影响另一个；只有「自动」模式才会改变
+    /// 当前工作区，且只在明确只有一侧在线时切换，避免两侧都插着时来回跳。
+    pub(crate) fn refresh_all(&mut self, cx: &mut Ctx) {
+        let adb_configured = self.state.config.adb_path.clone();
+        let hdc_configured = self.state.config.hdc_path.clone();
+        self.run_task(
+            cx,
+            "正在识别设备…",
+            move || {
+                let (adb, hdc) = std::thread::scope(|scope| {
+                    let adb = scope.spawn(move || probe_adb(&adb_configured));
+                    let hdc = scope.spawn(move || probe_hdc(&hdc_configured));
+                    (
+                        adb.join().unwrap_or_else(|_| Err(anyhow::anyhow!("ADB 探测线程异常"))),
+                        hdc.join().unwrap_or_else(|_| Err(anyhow::anyhow!("hdc 探测线程异常"))),
+                    )
+                });
+                let mdns = adb
+                    .as_ref()
+                    .ok()
+                    .map(|probe| probe.mdns.clone())
+                    .unwrap_or_default();
+                Ok((adb, hdc, mdns))
+            },
+            |core, result, cx| {
+                let (adb, hdc, mdns) = match result {
+                    Ok(value) => value,
+                    Err(err) => {
+                        cx.toast(ToastKind::Error, format!("识别设备失败：{err:#}"));
+                        return;
+                    }
+                };
+
+                match adb {
+                    Ok(probe) => {
+                        core.state.adb_path = Some(probe.path);
+                        core.state.adb_version = Some(probe.version);
+                        core.state.adb_error = None;
+                        core.apply_devices(probe.devices, cx);
+                    }
+                    Err(err) => {
+                        core.state.adb_path = None;
+                        core.state.adb_version = None;
+                        core.state.adb_error = Some(format!("{err:#}"));
+                        core.state.devices.clear();
+                        core.state.selected_serial = None;
+                        core.state.snapshot = None;
+                    }
+                }
+                core.state.mdns = mdns;
+
+                match hdc {
+                    Ok(probe) => {
+                        core.state.harmony.path = Some(probe.path);
+                        core.state.harmony.version = Some(probe.version);
+                        core.state.harmony.error = None;
+                        core.apply_hdc_devices(probe.devices, cx);
+                    }
+                    Err(err) => {
+                        core.state.harmony.path = None;
+                        core.state.harmony.version = None;
+                        core.state.harmony.error = Some(format!("{err:#}"));
+                        core.state.harmony.devices.clear();
+                        core.state.harmony.selected = None;
+                        core.reset_hdc_device_state(cx);
+                    }
+                }
+
+                core.resolve_auto_kind(cx);
+                // 识别完再补读快照，能力矩阵才有数据；已加载的不重复读。
+                if core.state.is_harmony() {
+                    if core.state.harmony.selected.is_some() && core.state.harmony.snapshot.is_none()
+                    {
+                        core.load_hdc_snapshot(cx);
+                    }
+                } else if core.state.selected_serial.is_some() && core.state.snapshot.is_none() {
+                    core.load_snapshot(cx);
+                }
+            },
+        );
+    }
+
+    /// 自动模式下根据在线设备切换工作区。
+    fn resolve_auto_kind(&mut self, cx: &mut Ctx) {
+        if !self.state.kind_mode.is_auto() {
+            return;
+        }
+        let android_online = self.state.devices.iter().any(Device::is_online);
+        let harmony_online = self
+            .state
+            .harmony
+            .devices
+            .iter()
+            .any(|device| device.is_online());
+        let next = match (android_online, harmony_online) {
+            (true, false) => Some(DeviceKind::Android),
+            (false, true) => Some(DeviceKind::Harmony),
+            // 两侧都有或都没有：保持当前工作区，避免来回抖动。
+            _ => None,
+        };
+        if let Some(next) = next
+            && self.state.device_kind != next
+        {
+            self.set_device_kind(next, cx);
+        }
+    }
+
+    pub(crate) fn set_kind_mode(&mut self, mode: crate::state::KindMode, cx: &mut Ctx) {
+        self.state.kind_mode = mode;
+        match mode.locked() {
+            Some(kind) => self.set_device_kind(kind, cx),
+            None => self.resolve_auto_kind(cx),
         }
     }
 

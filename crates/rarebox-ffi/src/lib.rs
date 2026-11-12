@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! RareBox 的跨语言绑定：C ABI + Android JNI。
 //!
 //! 设计目标：宿主（Kotlin / Wear Compose、C/C++、其他语言）只依赖 JSON 协议，
@@ -205,6 +207,43 @@ pub unsafe extern "C" fn rarebox_engine_set_native_lib_dir(dir: *const c_char) {
     }
 }
 
+/// 设置宿主应用目录：数据、图片与下载目录。
+///
+/// Android / Wear 的 Kotlin 宿主在创建引擎前调用（`filesDir`、
+/// `getExternalFilesDir("Pictures")`、`getExternalFilesDir("Download")`）；
+/// 桌面端由操作系统约定自动解析，无需调用。空指针或空字符串表示跳过。
+///
+/// # Safety
+/// 每个非空指针都必须是有效的 NUL 结尾 UTF-8 字符串。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rarebox_engine_set_app_dirs(
+    data_dir: *const c_char,
+    pictures_dir: *const c_char,
+    downloads_dir: *const c_char,
+) {
+    if let Some(dir) = unsafe { read_dir_arg(data_dir) } {
+        rarebox_core::config::set_data_dir(dir);
+    }
+    if let Some(dir) = unsafe { read_dir_arg(pictures_dir) } {
+        rarebox_core::config::set_pictures_dir(dir);
+    }
+    if let Some(dir) = unsafe { read_dir_arg(downloads_dir) } {
+        rarebox_core::config::set_downloads_dir(dir);
+    }
+}
+
+unsafe fn read_dir_arg(ptr: *const c_char) -> Option<std::path::PathBuf> {
+    if ptr.is_null() {
+        return None;
+    }
+    let text = unsafe { CStr::from_ptr(ptr) }.to_str().ok()?;
+    if text.is_empty() {
+        None
+    } else {
+        Some(std::path::PathBuf::from(text))
+    }
+}
+
 /// 释放 `rarebox_engine_state` 返回的字符串。
 ///
 /// # Safety
@@ -216,6 +255,15 @@ pub unsafe extern "C" fn rarebox_string_free(text: *mut c_char) {
     }
 }
 
+/// 把一个能力结论编码为 `{supported, enabled, hint}`。
+fn capability_json(capability: &rarebox_core::connect_support::Capability) -> serde_json::Value {
+    serde_json::json!({
+        "supported": capability.supported,
+        "enabled": capability.enabled,
+        "hint": capability.hint,
+    })
+}
+
 /// 把核心状态编码为宿主可读的 JSON。
 ///
 /// 字段命名与 Kotlin/JS 习惯一致（camelCase）；未实现的数据（安装计划等）
@@ -224,6 +272,12 @@ pub fn state_json(state: &CoreState) -> String {
     use serde_json::json;
 
     let snapshot = state.snapshot.as_ref().map(|snapshot| {
+        // 先算好能力结论，避免 `json!` 嵌套过深触发递归上限。
+        let support = snapshot.debug_support();
+        let wireless = capability_json(&support.wireless);
+        let wlan = capability_json(&support.wlan);
+        let usb = capability_json(&support.usb);
+        let recommended = support.recommended().map(|transport| transport.label());
         json!({
             "serial": snapshot.serial,
             "model": snapshot.model,
@@ -260,6 +314,12 @@ pub fn state_json(state: &CoreState) -> String {
                 "physicalDensity": snapshot.display.physical_density,
                 "overrideDensity": snapshot.display.override_density,
                 "rotation": snapshot.display.rotation,
+            },
+            "support": {
+                "wireless": wireless,
+                "wlan": wlan,
+                "usb": usb,
+                "recommended": recommended,
             },
         })
     });
@@ -313,11 +373,41 @@ pub fn state_json(state: &CoreState) -> String {
         })
     });
 
+    let scan = json!({
+        "running": state.scan.running,
+        "done": state.scan.done,
+        "total": state.scan.total,
+        "progress": state.scan.progress(),
+        "scope": state.scan.scope,
+        "deep": state.scan.deep,
+        "hits": state.scan.hits.iter().map(|hit| json!({
+            "address": hit.address,
+            "kind": hit.kind.map(|kind| match kind {
+                rarebox_core::DeviceKind::Android => "android",
+                rarebox_core::DeviceKind::Harmony => "harmony",
+            }),
+            "state": hit.state,
+        })).collect::<Vec<_>>(),
+    });
+
     let value = json!({
+        "kindMode": state.kind_mode.label(),
+        "autoKind": state.kind_mode.is_auto(),
         "deviceKind": match state.device_kind {
             rarebox_core::DeviceKind::Android => "android",
             rarebox_core::DeviceKind::Harmony => "harmony",
         },
+        "mdns": state.mdns.iter().map(|service| json!({
+            "instance": service.instance,
+            "kind": service.kind.label(),
+            "address": service.address,
+        })).collect::<Vec<_>>(),
+        "scan": scan,
+        "connectError": state.connect_error.as_ref().map(|error| json!({
+            "address": error.address,
+            "kind": error.kind.label(),
+            "detail": error.detail,
+        })),
         "adb": {
             "path": state.adb_path.as_ref().map(|path| path.to_string_lossy()),
             "version": state.adb_version,
@@ -623,6 +713,37 @@ mod android {
             .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
         if !dir.is_empty() {
             rarebox_core::platform::set_native_lib_dir(std::path::PathBuf::from(dir));
+        }
+    }
+
+    /// `CoreNative.setAppDirs(data, pictures, downloads)`：必须在 `nativeNew` 前调用。
+    ///
+    /// Kotlin 宿主传入 `filesDir` 与两个外部文件目录；任意参数为空字符串时跳过。
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_rarebox_core_CoreNative_setAppDirs<'local>(
+        mut env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        data_dir: JString<'local>,
+        pictures_dir: JString<'local>,
+        downloads_dir: JString<'local>,
+    ) {
+        let dirs = env
+            .with_env(|_env| -> jni::errors::Result<(String, String, String)> {
+                Ok((
+                    data_dir.to_string(),
+                    pictures_dir.to_string(),
+                    downloads_dir.to_string(),
+                ))
+            })
+            .resolve::<jni::errors::ThrowRuntimeExAndDefault>();
+        if !dirs.0.is_empty() {
+            rarebox_core::config::set_data_dir(std::path::PathBuf::from(&dirs.0));
+        }
+        if !dirs.1.is_empty() {
+            rarebox_core::config::set_pictures_dir(std::path::PathBuf::from(&dirs.1));
+        }
+        if !dirs.2.is_empty() {
+            rarebox_core::config::set_downloads_dir(std::path::PathBuf::from(&dirs.2));
         }
     }
 

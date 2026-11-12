@@ -23,14 +23,21 @@ use crate::hdc::HdcClient;
 
 impl Core {
     pub(crate) fn bootstrap(&mut self, cx: &mut Ctx) {
-        self.refresh_devices(cx);
-        self.refresh_hdc(cx);
+        // 一次并行探测同时完成 ADB / hdc / mDNS，自动识别设备类型。
+        self.refresh_all(cx);
     }
 
     pub(crate) fn dispatch(&mut self, command: Command, cx: &mut Ctx) {
         match command {
             Command::RefreshDevices => self.refresh_devices(cx),
             Command::RefreshHdc => self.refresh_hdc(cx),
+            Command::RefreshAll => self.refresh_all(cx),
+            Command::SetKindMode { mode } => self.set_kind_mode(mode, cx),
+            Command::ConnectSmart { address, code } => {
+                self.connect_smart(address, code.unwrap_or_default(), cx)
+            }
+            Command::ScanDevices { address, deep } => self.scan_devices(address, deep, cx),
+            Command::CancelScan => self.cancel_scan(),
             Command::LoadSnapshot => self.load_snapshot(cx),
             Command::LoadHdcSnapshot => self.load_hdc_snapshot(cx),
             Command::SelectDevice { serial } => self.select_device(serial, cx),

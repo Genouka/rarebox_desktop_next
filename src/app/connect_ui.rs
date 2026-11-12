@@ -3,10 +3,11 @@
 use super::shell_ui::page_scroll;
 use super::{Page, RareBox};
 use crate::adb::DeviceConnection;
+use rarebox_core::state::DeviceKind;
 use crate::ui::{self, ActionKind, MONO_FONT};
 use gpui::{
-    AnyElement, App, Context, FontWeight, IntoElement, ParentElement, SharedString, Styled, div,
-    prelude::*, px,
+    AnyElement, App, Context, ElementId, FontWeight, IntoElement, ParentElement, SharedString,
+    Styled, div, prelude::*, px,
 };
 use material3_gpui::icon::{Icon, IconName};
 use material3_gpui::prelude::*;
@@ -38,11 +39,17 @@ impl RareBox {
             .unwrap_or_else(|| "尚未检测到 ADB".to_string());
         let adb_version = self.adb_version.clone().unwrap_or_else(|| "—".to_string());
 
-        // 没有在线设备时，把引导放在最前面。
+        // 能力矩阵永远在顶部：先看图块知道手表支持哪种调试，再动手。
         let switch = self.transport_switch(cx);
-        let mut content = div().w_full().flex().flex_col().gap(px(16.)).child(switch);
+        let mut content = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(switch)
+            .child(self.support_card(cx, weak.clone(), adb_ready, adb_error.clone()));
         if online == 0 {
-            content = content.child(guide_card(cx, weak.clone(), adb_ready, adb_error.clone()));
+            content = content.child(self.scan_card(cx, weak.clone()));
         }
 
         let device_anchor = self.guide.anchors.handle(GuideTarget::ConnectDeviceList);
@@ -110,6 +117,8 @@ impl RareBox {
             )
         };
         let pair_anchor = self.guide.anchors.handle(GuideTarget::ConnectPairCard);
+        // 教程进行中强制展开，遮罩才能高亮到真实控件。
+        let manual_open = self.manual_open || self.guide.session.is_some();
         let wireless = Card::new()
             .outlined()
             .p(px(20.))
@@ -163,7 +172,7 @@ impl RareBox {
                     Some("link"),
                     ActionKind::Filled,
                     true,
-                    cx.listener(|app, _, _, cx| app.wireless_connect(cx)),
+                    cx.listener(|app, _, _, cx| app.connect_smart(cx)),
                 );
                 let disconnect_btn = ui::action_button(
                     cx,
@@ -220,62 +229,71 @@ impl RareBox {
             .child(guide_anchor(
                 &pair_anchor,
                 div()
-                    .mt(px(16.))
-                    .pt(px(16.))
+                    .mt(px(10.))
+                    .pt(px(10.))
                     .border_t_1()
                     .border_color(colors.outline_variant.opacity(0.4))
-                    .child(
-                        div()
-                            .text_size(px(11.5))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(colors.on_surface)
-                            .child("首次配对"),
-                    )
-                    .child(if mobile {
-                        div()
-                            .mt(px(10.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            .child(div().w_full().child(self.pair_field.clone()))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w(px(0.))
-                                            .child(self.pair_code_field.clone()),
-                                    )
-                                    .child(pair_button()),
-                            )
-                    } else {
-                        div()
-                            .mt(px(10.))
-                            .flex()
-                            .items_end()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .child(self.pair_field.clone()),
-                            )
-                            .child(
-                                div()
-                                    .w(px(140.))
-                                    .flex_none()
-                                    .child(self.pair_code_field.clone()),
-                            )
-                            .child(pair_button())
-                    })
-                    .child(div().mt(px(10.)).child(ui::callout(
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(ui::action_button(
                         cx,
-                        "info",
-                        "在手表「开发者选项 → 无线调试」中开启配对，输入手表显示的配对地址与六位配对码。配对成功后，用上方连接地址连接。",
-                    ))),
+                        "connect-manual-toggle",
+                        if manual_open {
+                            "收起配对码"
+                        } else {
+                            "用配对码配对"
+                        },
+                        Some("security"),
+                        ActionKind::Text,
+                        true,
+                        cx.listener(|app, _, _, cx| app.toggle_manual(cx)),
+                    ))
+                    .when(manual_open, |el| {
+                        el.child(if mobile {
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(8.))
+                                .child(div().w_full().child(self.pair_field.clone()))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w(px(0.))
+                                                .child(self.pair_code_field.clone()),
+                                        )
+                                        .child(pair_button()),
+                                )
+                        } else {
+                            div()
+                                .flex()
+                                .items_end()
+                                .gap(px(8.))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w(px(0.))
+                                        .child(self.pair_field.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(140.))
+                                        .flex_none()
+                                        .child(self.pair_code_field.clone()),
+                                )
+                                .child(pair_button())
+                        })
+                        .child(div().mt(px(8.)).child(ui::callout(
+                            cx,
+                            "info",
+                            "配对地址在手表「无线调试 → 使用配对码配对设备」里。",
+                        )))
+                    }),
             ));
 
         let adb = Card::new()
@@ -370,196 +388,407 @@ impl RareBox {
                 )
                 .child(wireless)
                 .when(cfg!(windows), |el| {
-                    el.child(guide_anchor(&driver_anchor, driver_card(cx, weak.clone())))
+                    // 驱动卡默认收起，只有 USB 路径需要时才展开，减少无关文字。
+                    let driver_open = self.driver_open;
+                    let driver_toggle = ui::action_button(
+                        cx,
+                        "connect-driver-toggle",
+                        if driver_open {
+                            "收起 USB 驱动"
+                        } else {
+                            "USB 驱动"
+                        },
+                        Some("usb"),
+                        ActionKind::Text,
+                        true,
+                        cx.listener(|app, _, _, cx| app.toggle_driver(cx)),
+                    );
+                    el.child(guide_anchor(
+                        &driver_anchor,
+                        div()
+                            .w_full()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .child(driver_toggle)
+                            .when(driver_open, |el| el.child(driver_card(cx, weak.clone()))),
+                    ))
                 }),
         )
         .into_any_element()
     }
 }
 
-/// 首次连接引导：按真实状态标注每一步是否已完成。
-fn guide_card(
-    cx: &App,
-    weak: gpui::WeakEntity<RareBox>,
-    adb_ready: bool,
-    adb_error: Option<String>,
-) -> Card {
-    let colors = *cx.theme().colors();
-    let step = |index: usize, done: bool, title: &'static str, detail: &'static str| {
-        let (dot, text) = if done {
-            (colors.tertiary, colors.on_surface)
-        } else {
-            (colors.outline_variant, colors.on_surface_variant)
-        };
-        div()
-            .flex()
-            .items_start()
-            .gap(px(10.))
-            .child(
-                div()
-                    .size(px(20.))
-                    .flex_none()
-                    .rounded_full()
-                    .bg(if done {
-                        colors.tertiary_container
-                    } else {
-                        colors.surface_container_high
-                    })
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_size(px(10.5))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(if done { dot } else { text })
-                            .child(if done {
-                                "✓".to_string()
-                            } else {
-                                format!("{}", index + 1)
-                            }),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .flex_1()
-                    .min_w(px(0.))
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(text)
-                            .child(title),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(10.5))
-                            .line_height(px(16.))
-                            .text_color(colors.on_surface_variant)
-                            .child(detail),
-                    ),
-            )
-    };
+/// 能力矩阵：三张图块分别表示无线调试 / WLAN 调试 / USB 调试。
+///
+/// 状态来自快照里的调试读数；没连过设备时统一显示「未检测」并保留教程入口，
+/// 不做没有依据的「不支持」判断。
+impl RareBox {
+    fn support_card(
+        &self,
+        cx: &App,
+        weak: gpui::WeakEntity<RareBox>,
+        adb_ready: bool,
+        adb_error: Option<String>,
+    ) -> Card {
+        let colors = *cx.theme().colors();
+        let support = self
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.debug_support());
+        let recommended = support.as_ref().and_then(|support| support.recommended());
 
-    Card::new()
-        .outlined()
-        .p(px(20.))
-        .child(ui::section_header(
-            cx,
-            "连接一台新设备",
-            Some("RareBox 通过 ADB 与手表通信，完成下面三步即可"),
-            None,
-        ))
-        .child(
+        let tile = |key: &'static str,
+                    label: &'static str,
+                    icon: &'static str,
+                    capability: Option<&rarebox_core::connect_support::Capability>,
+                    guide: &'static str| {
+            let (dot, status) = match capability {
+                Some(capability) if capability.enabled => (colors.tertiary, "已开启"),
+                Some(capability) if capability.supported == Some(false) => {
+                    (colors.error, capability.hint)
+                }
+                Some(capability) if capability.supported == Some(true) => {
+                    (colors.primary, "支持，未开启")
+                }
+                _ => (colors.outline_variant, "未检测"),
+            };
+            let is_recommended = recommended.map(|transport| transport.guide_id()) == Some(guide);
+            let weak = weak.clone();
             div()
-                .mt(px(16.))
+                .id(ElementId::Name(format!("connect-tile-{key}").into()))
+                .flex_1()
+                .min_w(px(120.))
+                .p(px(12.))
+                .rounded(px(14.))
+                .bg(if is_recommended {
+                    colors.secondary_container
+                } else {
+                    colors.surface_container_low
+                })
                 .flex()
                 .flex_col()
-                .gap(px(12.))
-                .child(step(
-                    0,
-                    adb_ready,
-                    "准备 ADB",
-                    if cfg!(any(target_os = "android", target_os = "ios")) {
-                        "应用已内置 adb，无需另外安装；也可以在「设置」中指定外部 adb 路径。"
-                    } else {
-                        "RareBox 会自动查找 platform-tools；找不到时可在「设置」指定 adb.exe。"
-                    },
-                ))
-                .child(step(
-                    1,
-                    false,
-                    if cfg!(any(target_os = "android", target_os = "ios")) {
-                        "在手表上开启无线调试"
-                    } else {
-                        "用 USB 数据线连接手表"
-                    },
-                    if cfg!(any(target_os = "android", target_os = "ios")) {
-                        "在手表「设置 → 系统 → 开发者选项 → 无线调试」中开启配对，然后使用下方的无线调试卡片连接。"
-                    } else {
-                        "手表上进入「设置 → 系统 → 开发者选项」，打开「USB 调试」，并在弹窗中点「允许」。"
-                    },
-                ))
-                .child(step(
-                    2,
-                    false,
-                    "确认设备出现在下方列表",
-                    if cfg!(any(target_os = "android", target_os = "ios")) {
-                        "配对并连接后设备会出现在下方列表；若显示「离线」，请检查地址、端口与网络。"
-                    } else {
-                        "首次授权后设备状态会变成「已连接」；如果显示「未授权」，请在手表上重新确认授权。"
-                    },
-                )),
-        )
-        .when_some(adb_error, |el, error| {
-            el.child(div().mt(px(12.)).child(ui::callout(
-                cx,
-                "warning",
-                format!("ADB 尚未就绪：{error}"),
-            )))
-        })
-        .child(
-            div()
-                .mt(px(14.))
-                .flex()
                 .items_center()
-                .gap(px(8.))
-                .child(ui::action_button(
+                .gap(px(4.))
+                .cursor_pointer()
+                .hover(move |style| style.bg(colors.surface_container_high))
+                .on_click(move |_, _, cx| {
+                    if let Err(err) = weak.update(cx, |app, cx| app.guide_start(guide, cx)) {
+                        eprintln!("RareBox Desktop: 打开连接教程失败: {err}");
+                    }
+                })
+                .child(
+                    Icon::new(IconName::new(icon))
+                        .size(px(26.))
+                        .color(colors.primary),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.5))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(colors.on_surface)
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(ui::status_dot(dot))
+                        .child(
+                            div()
+                                .text_size(px(10.))
+                                .text_color(colors.on_surface_variant)
+                                .child(status),
+                        ),
+                )
+                .when(is_recommended, |el| {
+                    el.child(
+                        div()
+                            .text_size(px(9.5))
+                            .text_color(colors.on_secondary_container)
+                            .child("推荐"),
+                    )
+                })
+        };
+
+        let wireless = support.as_ref().map(|support| &support.wireless);
+        let wlan = support.as_ref().map(|support| &support.wlan);
+        let usb = support.as_ref().map(|support| &support.usb);
+        let tutorial_id = self.guide_connect_target();
+        let guide_weak = weak.clone();
+        let refresh_weak = weak.clone();
+
+        Card::new()
+            .outlined()
+            .p(px(20.))
+            .child(ui::section_header(
+                cx,
+                "连接方式",
+                Some(if support.is_some() {
+                    "按手表能力标注；点图块看图文教程"
+                } else {
+                    "连上后自动识别，也可先看教程"
+                }),
+                None,
+            ))
+            .child(
+                div()
+                    .mt(px(14.))
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(8.))
+                    .child(tile(
+                        "wireless",
+                        "无线调试",
+                        "tabler-wifi",
+                        wireless,
+                        "connect_wireless",
+                    ))
+                    .child(tile(
+                        "wlan",
+                        "WLAN 调试",
+                        "wifi_tethering",
+                        wlan,
+                        "connect_wlan",
+                    ))
+                    .child(tile("usb", "USB 调试", "tabler-usb", usb, "connect_usb")),
+            )
+            .when_some(adb_error, |el, error| {
+                el.child(div().mt(px(12.)).child(ui::callout(
                     cx,
-                    "connect-guide-refresh",
-                    "重新检测",
-                    Some("refresh"),
-                    ActionKind::Filled,
-                    true,
-                    {
-                        let weak = weak.clone();
+                    "warning",
+                    format!("ADB 未就绪：{error}"),
+                )))
+            })
+            .child(
+                div()
+                    .mt(px(14.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(ui::action_button(
+                        cx,
+                        "connect-support-refresh",
+                        "重新识别",
+                        Some("refresh"),
+                        ActionKind::Filled,
+                        true,
                         move |_, _, cx| {
-                            if let Err(err) = weak.update(cx, |app, cx| app.refresh_devices(cx)) {
-                                eprintln!("RareBox Desktop: 重新检测设备失败: {err}");
+                            if let Err(err) =
+                                refresh_weak.update(cx, |app, cx| app.refresh_all(cx))
+                            {
+                                eprintln!("RareBox Desktop: 重新识别失败: {err}");
                             }
-                        }
-                    },
-                ))
-                .child(ui::action_button(
-                    cx,
-                    "connect-guide-walkthrough",
-                    "图文教程",
-                    Some("help"),
-                    ActionKind::Filled,
-                    true,
-                    {
-                        let weak = weak.clone();
+                        },
+                    ))
+                    .child(ui::action_button(
+                        cx,
+                        "connect-support-guide",
+                        "图文教程",
+                        Some("help"),
+                        ActionKind::Tonal,
+                        true,
                         move |_, _, cx| {
-                            if let Err(err) = weak.update(cx, |app, cx| {
-                                app.guide_start("connect_usb", cx);
+                            if let Err(err) = guide_weak.update(cx, |app, cx| {
+                                app.guide_start(tutorial_id, cx);
                             }) {
                                 eprintln!("RareBox Desktop: 打开连接教程失败: {err}");
                             }
+                        },
+                    ))
+                    .when(!adb_ready, |el| {
+                        el.child(
+                            div()
+                                .text_size(px(10.5))
+                                .text_color(colors.on_surface_variant)
+                                .child("ADB 未找到"),
+                        )
+                    }),
+            )
+    }
+
+    /// 盲扫面板：找不到设备时按网段/端口扫一遍，结果可一键连接。
+    fn scan_card(&self, cx: &App, weak: gpui::WeakEntity<RareBox>) -> Card {
+        let colors = *cx.theme().colors();
+        let scan = &self.scan;
+        let progress = scan.progress();
+        let weak_start = weak.clone();
+        let weak_deep = weak.clone();
+        let weak_cancel = weak.clone();
+        let weak_clear = weak.clone();
+
+        let hits = scan.hits.iter().map(|hit| {
+            let address = hit.address.clone();
+            let weak = weak.clone();
+            let kind = match hit.kind {
+                Some(DeviceKind::Android) => "ADB",
+                Some(DeviceKind::Harmony) => "hdc",
+                None => "端口",
+            };
+            div()
+                .id(ElementId::Name(format!("scan-hit-{}", hit.address).into()))
+                .w_full()
+                .rounded(px(10.))
+                .bg(colors.surface_container_low)
+                .px(px(12.))
+                .py(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .text_size(px(10.))
+                        .text_color(colors.primary)
+                        .child(kind),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .text_size(px(12.))
+                        .font_family(MONO_FONT)
+                        .truncate()
+                        .child(address.clone()),
+                )
+                .child(ui::action_button(
+                    cx,
+                    ElementId::Name(format!("scan-connect-{}", hit.address).into()),
+                    "连接",
+                    None,
+                    ActionKind::Filled,
+                    hit.kind.is_some(),
+                    move |_, _, cx| {
+                        let address = address.clone();
+                        if let Err(err) =
+                            weak.update(cx, |app, cx| app.scan_connect(address, cx))
+                        {
+                            eprintln!("RareBox Desktop: 扫描结果连接失败: {err}");
                         }
                     },
                 ))
-                .child(ui::action_button(
-                    cx,
-                    "connect-guide-settings",
-                    "ADB 设置",
-                    Some("settings"),
-                    ActionKind::Outlined,
-                    true,
-                    {
-                        let weak = weak.clone();
+                .into_any_element()
+        });
+
+        Card::new()
+            .outlined()
+            .p(px(20.))
+            .child(ui::section_header(
+                cx,
+                "找不到手表？",
+                Some("扫本机网段，或填手表的 IP"),
+                None,
+            ))
+            .child(
+                div()
+                    .mt(px(12.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(div().flex_1().min_w(px(0.)).child(self.scan_field.clone()))
+                    .child(ui::action_button(
+                        cx,
+                        "connect-scan",
+                        if scan.running { "扫描中…" } else { "扫描" },
+                        Some("search"),
+                        ActionKind::Filled,
+                        !scan.running,
                         move |_, _, cx| {
                             if let Err(err) =
-                                weak.update(cx, |app, cx| app.set_page(Page::Settings, cx))
+                                weak_start.update(cx, |app, cx| app.start_scan(false, cx))
                             {
-                                eprintln!("RareBox Desktop: 打开设置失败: {err}");
+                                eprintln!("RareBox Desktop: 启动扫描失败: {err}");
                             }
-                        }
-                    },
-                )),
-        )
+                        },
+                    )),
+            )
+            .when(scan.running || scan.total > 0, |el| {
+                el.child(
+                    div()
+                        .mt(px(12.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .h(px(6.))
+                                .w_full()
+                                .rounded_full()
+                                .bg(colors.surface_container_highest)
+                                .child(
+                                    div()
+                                        .h_full()
+                                        .rounded_full()
+                                        .bg(ui::progress_color(cx, progress))
+                                        .w(px((progress * 360.).max(2.))),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .text_color(colors.on_surface_variant)
+                                .child(format!("{} · {}/{}", scan.scope, scan.done, scan.total)),
+                        ),
+                )
+            })
+            .children(hits)
+            .child(
+                div()
+                    .mt(px(10.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(ui::action_button(
+                        cx,
+                        "connect-scan-deep",
+                        "深度扫描",
+                        None,
+                        ActionKind::Text,
+                        !scan.running,
+                        move |_, _, cx| {
+                            if let Err(err) =
+                                weak_deep.update(cx, |app, cx| app.start_scan(true, cx))
+                            {
+                                eprintln!("RareBox Desktop: 深度扫描失败: {err}");
+                            }
+                        },
+                    ))
+                    .when(scan.running, |el| {
+                        el.child(ui::action_button(
+                            cx,
+                            "connect-scan-cancel",
+                            "取消",
+                            None,
+                            ActionKind::Text,
+                            true,
+                            move |_, _, cx| {
+                                if let Err(err) =
+                                    weak_cancel.update(cx, |app, cx| app.cancel_scan(cx))
+                                {
+                                    eprintln!("RareBox Desktop: 取消扫描失败: {err}");
+                                }
+                            },
+                        ))
+                    })
+                    .when(!scan.running && !scan.hits.is_empty(), |el| {
+                        el.child(ui::action_button(
+                            cx,
+                            "connect-scan-clear",
+                            "清空结果",
+                            None,
+                            ActionKind::Text,
+                            true,
+                            move |_, _, cx| {
+                                if let Err(err) =
+                                    weak_clear.update(cx, |app, cx| app.clear_scan(cx))
+                                {
+                                    eprintln!("RareBox Desktop: 清空扫描结果失败: {err}");
+                                }
+                            },
+                        ))
+                    }),
+            )
+    }
 }
 
 /// USB 驱动卡片：仅 Windows 有意义。显示驱动是否已安装，并提供安装/卸载按钮。

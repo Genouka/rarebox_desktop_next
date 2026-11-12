@@ -195,6 +195,8 @@ pub struct Core {
     pub state: CoreState,
     pub(crate) remote: Option<Arc<std::sync::Mutex<ScrcpySession>>>,
     pub(crate) remote_stop: Option<StopFlag>,
+    /// 盲扫的取消开关；新一轮扫描会替换它。
+    pub(crate) scan_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) latest: Arc<RwLock<Arc<CoreState>>>,
     pub(crate) events: Sender<Event>,
 }
@@ -268,6 +270,7 @@ impl Engine {
             state,
             remote: None,
             remote_stop: None,
+            scan_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             latest: latest.clone(),
             events: event_tx.clone(),
         };

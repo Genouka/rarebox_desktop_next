@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="240" viewBox="0 0 480 240">
+  <g fill="none" stroke="black" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 手表 -->
+    <rect x="28" y="46" width="116" height="148" rx="24"/>
+    <rect x="42" y="74" width="88" height="66" rx="10" fill="black" opacity=".08"/>
+    <path d="M44 46 L128 46 L120 30 L52 30 Z"/>
+    <path d="M44 194 L128 194 L120 210 L52 210 Z"/>
+    <!-- 设置齿轮 -->
+    <circle cx="86" cy="104" r="12"/>
+    <path d="M86 86 V92 M86 116 V122 M68 104 H74 M98 104 H104"/>
+    <path d="M70 88 L74 92 M102 120 L98 116 M70 120 L74 116 M102 88 L98 92"/>
+    <!-- 开关（打开） -->
+    <rect x="58" y="132" width="56" height="24" rx="12"/>
+    <circle cx="100" cy="144" r="8" fill="black"/>
+    <!-- 无线波纹 -->
+    <path d="M170 92 C 190 72, 210 72, 230 92"/>
+    <path d="M182 108 C 194 96, 206 96, 218 108"/>
+    <circle cx="200" cy="122" r="5" fill="black"/>
+    <!-- 端口标签 -->
+    <rect x="264" y="70" width="176" height="60" rx="12"/>
+    <path d="M280 100 H 424" stroke-dasharray="8 6"/>
+    <path d="M290 88 L 300 100 L 290 112 M306 88 L 316 100 L 306 112 M322 88 L 332 100 L 322 112"/>
+    <text x="352" y="106" font-family="monospace" font-size="22" fill="black" stroke="none">5555</text>
+    <!-- 数据线 -->
+    <path d="M96 194 C 130 214, 190 214, 224 194"/>
+    <rect x="224" y="184" width="26" height="20" rx="4"/>
+    <path d="M250 194 H 300"/>
+    <rect x="300" y="176" width="34" height="36" rx="6"/>
+    <path d="M334 186 H 356 M334 202 H 356"/>
+  </g>
+</svg>

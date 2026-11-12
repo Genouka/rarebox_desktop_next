@@ -145,6 +145,12 @@ pub enum GuideTarget {
     ConnectPairCard,
     ConnectDriverCard,
     ConnectHdcCard,
+    /// 连接页顶部的能力矩阵（无线 / WLAN / USB 三张图块）。
+    ConnectSupportCard,
+    /// 「开启 TCP/IP 5555」动作。
+    ConnectTcpipAction,
+    /// 盲扫面板。
+    ConnectScanPanel,
     AppsInstallButton,
     AppsInstallPanel,
     HarmonyAppsInstall,
@@ -333,8 +339,8 @@ const NO_STUCK: &[StuckHelp] = &[];
 pub static GUIDES: &[Guide] = &[
     Guide {
         id: "connect_choose",
-        title: "连接 Android 手表",
-        summary: "先判断手表是否支持无线调试，再选择 USB 或无线。",
+        title: "连接手表",
+        summary: "不用分辨系统：选一种连接方式，程序自动识别。",
         category: GuideCategory::Connect,
         platforms: Platforms::ANDROID,
         keywords: &[
@@ -346,46 +352,47 @@ pub static GUIDES: &[Guide] = &[
             "wlan",
             "配对",
             "选择",
+            "识别",
         ],
         duration: "约 1 分钟",
         tutorial: true,
         steps: &[GuideStep::choose(
-            "你的手表支持「无线调试」吗？",
-            "在手表「设置 → 系统 → 开发者选项」里找「无线调试 / WLAN 调试」。有就可以不用数据线；不确定或只想用线，选 USB。",
+            "选一种连接方式",
+            "不用判断是 Android 还是 HarmonyOS，连上后程序会自动识别。",
             Some("connect_choose"),
             &[],
             None,
-            GuideTarget::None,
+            GuideTarget::ConnectSupportCard,
             GuideGate::None,
             &[
                 StuckHelp::new(
                     "找不到开发者选项",
-                    "先到「设置 → 系统 → 关于」连点版本号 7 次；开启后再回来。",
+                    "「设置 → 系统 → 关于」连点版本号 7 次。",
                     None,
                 ),
                 StuckHelp::new(
                     "手表只显示二维码",
-                    "RareBox 桌面端不读取摄像头二维码。请在手表上选「使用配对码配对设备」，或改用 USB。",
+                    "在手表上选「使用配对码配对设备」。",
                     None,
                 ),
             ],
             &[
                 GuideChoice::new(
-                    "支持：用无线连接",
-                    "手表显示配对码，电脑手动输入地址",
+                    "无线调试",
+                    "有「配对码」，最省线",
                     "tabler-wifi",
                     "connect_wireless",
                 ),
                 GuideChoice::new(
-                    "用 USB 数据线",
-                    "第一次连接最稳，可顺便完成授权",
-                    "tabler-usb",
-                    "connect_usb",
+                    "WLAN 调试",
+                    "旧机型，端口 5555",
+                    "tabler-router",
+                    "connect_wlan",
                 ),
                 GuideChoice::new(
-                    "找不到无线调试",
-                    "先用 USB；驱动或连接问题再排查",
-                    "tabler-help",
+                    "USB 数据线",
+                    "第一次最稳",
+                    "tabler-usb",
                     "connect_usb",
                 ),
             ],
@@ -549,101 +556,168 @@ pub static GUIDES: &[Guide] = &[
         tutorial: true,
         steps: &[
             GuideStep::new(
-                "打开「无线调试」",
-                "手表：设置 → 系统 → 开发者选项 → 无线调试，打开开关。",
+                "打开无线调试",
+                "设置 → 系统 → 开发者选项 → 无线调试。",
                 Some("wireless_debug"),
-                &["「无线调试」已打开"],
+                &["开关已打开"],
                 None,
                 GuideTarget::None,
                 GuideGate::None,
                 &[StuckHelp::new(
                     "找不到无线调试",
-                    "先开启开发者选项；部分 Wear OS 版本把无线调试放在开发者选项最下方。",
+                    "先开启开发者选项；部分版本在列表最下方。",
                     None,
                 )],
             ),
             GuideStep::new(
-                "选择配对方式：扫码或配对码",
-                "在无线调试页点「使用配对码配对设备」。有些手机支持扫二维码；RareBox 桌面端不读取摄像头，请用配对码手动输入。",
+                "点「使用配对码配对设备」",
+                "手表上会显示配对地址和六位码。",
                 Some("wireless_pair"),
-                &["已打开「使用配对码配对设备」页面"],
+                &["已打开配对码页面"],
                 None,
                 GuideTarget::None,
                 GuideGate::None,
                 &[
                     StuckHelp::new(
-                        "手表只显示二维码",
-                        "退出二维码页面，改点「使用配对码配对设备」；或回到连接方式选择，改用 USB。",
+                        "只有二维码",
+                        "改点「使用配对码配对设备」。",
                         None,
                     ),
                     StuckHelp::new(
-                        "想用电脑摄像头扫码",
-                        "桌面端暂不支持扫码；请用配对码，配对地址和六位码都在手表上。",
+                        "想扫码",
+                        "桌面端不读摄像头，请用配对码。",
                         None,
                     ),
                 ],
             ),
             GuideStep::new(
-                "手动记下配对地址和配对码",
-                "页面会显示 IP:端口 和 6 位配对码。记下来；这个地址只在配对时有效，和后面的连接地址通常不同。",
+                "记下配对地址与六位码",
+                "配对地址只用于配对，和连接端口不同。",
                 Some("wireless_pair"),
-                &["已记录配对地址和端口", "已记录 6 位配对码"],
+                &["已记录地址", "已记录六位码"],
                 None,
                 GuideTarget::None,
                 GuideGate::None,
                 &[StuckHelp::new(
-                    "配对窗口很快消失",
-                    "重新点「使用配对码配对设备」；先不要关闭这个页面。",
+                    "页面很快消失",
+                    "重新点「使用配对码配对设备」。",
                     None,
                 )],
             ),
             GuideStep::new(
-                "在 RareBox 里手动输入配对信息",
-                "连接页 →「首次配对」：手动填入配对地址和六位配对码，点「配对」。",
+                "在 RareBox 配对",
+                "配对地址和六位码填进去，点「配对」。",
                 Some("app_pair"),
-                &["地址和配对码已填入", "已点「配对」"],
+                &["已点「配对」"],
                 Some(GuidePage::Connect),
                 GuideTarget::ConnectPairCard,
                 GuideGate::None,
-                &[
-                    StuckHelp::new(
-                        "配对失败或超时",
-                        "确认电脑和手表在同一 Wi-Fi；地址用配对端口，不是上面的连接端口；重新打开配对页面再试。",
-                        None,
-                    ),
-                    StuckHelp::new("找不到输入框", "连接页往下滚，找到「首次配对」卡片。", None),
-                ],
+                &[StuckHelp::new(
+                    "配对失败",
+                    "确认同一 Wi-Fi，地址是配对端口。",
+                    None,
+                )],
             ),
             GuideStep::new(
-                "手动输入连接地址",
-                "把无线调试页面上的「IP 地址和端口」填到「连接已配对设备」，点「连接」。这里通常和配对端口不同。",
+                "点「连接」",
+                "填连接地址（不是配对地址），或直接用「盲扫」。",
                 Some("wireless_connect"),
-                &["已点「连接」", "设备出现在列表"],
+                &["设备出现在列表"],
                 Some(GuidePage::Connect),
                 GuideTarget::ConnectPairCard,
                 GuideGate::None,
-                &[
-                    StuckHelp::new(
-                        "连接被拒绝",
-                        "使用连接地址而不是配对地址；确认端口没有输错。",
-                        None,
-                    ),
-                    StuckHelp::new(
-                        "列表里没有设备",
-                        "点「刷新列表」；检查手表是否还在同一网络、无线调试是否仍然开启。",
-                        Some(GuideAction::RefreshDevices),
-                    ),
-                ],
+                &[StuckHelp::new(
+                    "连接被拒绝",
+                    "用连接地址；端口别抄错。",
+                    Some(GuideAction::RefreshDevices),
+                )],
             ),
             GuideStep::new(
                 "选中设备",
-                "点列表中的无线设备，状态变为「已连接」即可使用其他页面。",
+                "点列表里的设备即可开始使用。",
                 Some("device_select"),
-                &["设备状态显示「已连接」"],
+                &["状态显示「已连接」"],
                 Some(GuidePage::Connect),
                 GuideTarget::ConnectDeviceList,
                 GuideGate::DeviceSelected,
                 NO_STUCK,
+            ),
+        ],
+    },
+
+    Guide {
+        id: "connect_wlan",
+        title: "WLAN 调试（旧版 5555）",
+        summary: "没有「无线调试/配对码」的旧手表：先 USB 开一次 TCP 端口，再无线连。",
+        category: GuideCategory::Connect,
+        platforms: Platforms::ANDROID,
+        keywords: &[
+            "wlan",
+            "5555",
+            "tcpip",
+            "局域网",
+            "旧版",
+            "没有无线调试",
+            "adb tcpip",
+        ],
+        duration: "约 3 分钟",
+        tutorial: true,
+        steps: &[
+            GuideStep::new(
+                "打开「WLAN 调试」",
+                "设置 → 系统 → 开发者选项 → WLAN 调试。",
+                Some("wlan_debug"),
+                &["「WLAN 调试」已打开"],
+                None,
+                GuideTarget::None,
+                GuideGate::None,
+                &[StuckHelp::new(
+                    "没有这个开关",
+                    "用 USB 连一次，由程序开启 5555 端口。",
+                    None,
+                )],
+            ),
+            GuideStep::new(
+                "先用 USB 连一次",
+                "数据线连电脑，手表弹窗点「允许」。",
+                Some("usb_cable"),
+                &["设备已出现在列表"],
+                Some(GuidePage::Connect),
+                GuideTarget::ConnectDeviceList,
+                GuideGate::AdbReady,
+                &[StuckHelp::new(
+                    "没有弹窗",
+                    "换数据线或 USB 口，重新插拔。",
+                    Some(GuideAction::RefreshDevices),
+                )],
+            ),
+            GuideStep::new(
+                "开启 5555 端口",
+                "在连接页点「开启 TCP/IP 5555」。",
+                Some("wlan_tcpip"),
+                &["已点「开启 5555」"],
+                Some(GuidePage::Connect),
+                GuideTarget::ConnectTcpipAction,
+                GuideGate::None,
+                &[StuckHelp::new(
+                    "按钮是灰的",
+                    "先选中一台在线设备。",
+                    Some(GuideAction::RefreshDevices),
+                )],
+            ),
+            GuideStep::new(
+                "拔线，无线连接",
+                "拔掉数据线，点「连接」；地址会自动填好。",
+                Some("wlan_connect"),
+                &["设备显示「已连接」"],
+                Some(GuidePage::Connect),
+                GuideTarget::ConnectPairCard,
+                GuideGate::DeviceSelected,
+                &[StuckHelp::new(
+                    "连不上",
+                    "确认手表和电脑在同一 Wi-Fi；用「盲扫」找 5555 端口。",
+                    None,
+                )],
             ),
         ],
     },
@@ -2343,6 +2417,8 @@ mod tests {
         for id in [
             "connect_usb",
             "connect_wireless",
+            "connect_wlan",
+            "connect_choose",
             "harmony_connect",
             "driver",
             "not_connecting",
@@ -2350,6 +2426,26 @@ mod tests {
         ] {
             let guide = find(id).expect("guide exists");
             assert!(!guide.requires_device(), "{id} 不应该要求设备");
+        }
+    }
+
+    #[test]
+    fn connect_guides_all_have_art() {
+        for id in [
+            "connect_choose",
+            "connect_usb",
+            "connect_wireless",
+            "connect_wlan",
+        ] {
+            let guide = find(id).expect("guide exists");
+            for step in guide.steps {
+                assert!(
+                    step.art.is_some(),
+                    "{} 的步骤「{}」缺少配图",
+                    id,
+                    step.title
+                );
+            }
         }
     }
 
